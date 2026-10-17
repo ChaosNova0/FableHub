@@ -94,10 +94,11 @@ end
 ns.CommHandlers.h = function(sender, payload)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" then return end
-  if not P.IsOfficer(f[5]) then return end
+  if not ns.OfficerSent(sender, f[5]) then return end
   local g = G()
   if not g then return end
   local ts = Enc.FromB36(f[4]) or 0
+  if not ns.TimeOK(ts) then return end
   local cur = g.rhLinks[f[2]]
   if cur and (cur.ts or 0) >= ts then return end
   g.rhLinks[f[2]] = { key = f[3] or "", ts = ts, by = f[5] }

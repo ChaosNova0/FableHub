@@ -148,6 +148,8 @@ end
 ns.CommHandlers.p = function(sender, payload)
   local p = DecodePerm(payload)
   if not p or P.RankIndex(p.by) ~= 0 then return end -- only the Guild Master
+  -- straight from the Guild Master, or passed on by an officer
+  if not ns.OfficerSent(sender, p.by) or not ns.TimeOK(p.ts) then return end
   local b = G()
   if not b or (b.perm and (b.perm.ts or 0) >= p.ts) then return end
   b.perm = p
@@ -258,12 +260,15 @@ local function Distribute(tab, msgType, payload, only)
 end
 B.Distribute = Distribute
 
-local function Store(kind, tab, data)
+local function Store(kind, tab, data, sender)
   local b = G()
-  if not b then return false end
+  if not b or not ns.TimeOK(data.ts) then return false end
   local into = kind == "tab" and b.tabs or b.logs
   local cur = into[tab]
   if cur and (cur.ts or 0) >= (data.ts or 0) then return false end
+  -- from the member who read it (or an officer); copies passed on by other
+  -- members only fill a tab we have nothing for
+  if cur and sender and not ns.FirstHand(sender, data.by) then return false end
   into[tab] = data
   ns.Fire("BANK_CHANGED")
   return true
@@ -280,12 +285,12 @@ end
 
 ns.CommHandlers.t = function(sender, payload)
   local tab, t = DecodeTab(payload)
-  if tab and Acceptable(tab, t.by) then Store("tab", tab, t) end
+  if tab and Acceptable(tab, t.by) then Store("tab", tab, t, sender) end
 end
 
 ns.CommHandlers.l = function(sender, payload)
   local tab, l = DecodeLog(payload)
-  if tab and Acceptable(tab, l.by) then Store("log", tab, l) end
+  if tab and Acceptable(tab, l.by) then Store("log", tab, l, sender) end
 end
 
 ns.CommHandlers.g = function(sender, payload)
@@ -293,7 +298,8 @@ ns.CommHandlers.g = function(sender, payload)
   if f[1] ~= "1" then return end
   local b = G()
   local m = { ts = Enc.FromB36(f[2]), by = f[3], v = tonumber(f[4]) or 0 }
-  if not b or (b.money and (b.money.ts or 0) >= m.ts) or not P.RankIndex(m.by) then return end
+  if not b or (b.money and (b.money.ts or 0) >= m.ts) or not P.RankIndex(m.by) or not ns.TimeOK(m.ts) then return end
+  if b.money and not ns.FirstHand(sender, m.by) then return end -- second-hand copies only fill gaps
   b.money = m
   ns.Fire("BANK_CHANGED")
 end
@@ -609,9 +615,21 @@ function B.OpenCount()
   return n
 end
 
+local MAX_OPEN = 10 -- open bank requests per member, so nobody can flood the officers
 ns.CommHandlers.q = function(sender, payload)
   local r = DecodeReq(payload)
-  if r then ApplyReq(r) end
+  if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
+  local b = G()
+  local old = b and b.requests[r.id]
+  if not old then
+    local n = 0
+    for _, x in pairs(b and b.requests or {}) do if x.by == r.by and x.status == "open" then n = n + 1 end end
+    if n >= MAX_OPEN then return end
+  end
+  -- the actor must be the sender (or the sender an officer); copies passed on
+  -- by other members during catch-up only fill in requests we don't have yet
+  if not ns.FirstHand(sender, r.actor) and old then return end
+  ApplyReq(r)
 end
 
 ------------------------------------------------------------------------
@@ -630,7 +648,10 @@ function B.SendDigest()
 end
 
 local function HandleDigest(sender, payload, retried)
-  if not ns.AmRelayFor(sender) then return end
+  -- the permission map is officer data: an officer passes it on; the rest
+  -- comes from the usual relay
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  if not member and not officer then return end
   local b = G()
   if not b then return end
   -- a brand-new member may not be in our roster yet: their rank decides what they may get
@@ -646,7 +667,8 @@ local function HandleDigest(sender, payload, retried)
     if k then theirs[k] = v end
   end
   local function Ts(k) return Enc.FromB36((theirs[k] or "0"):match("^(%w+)")) end
-  if b.perm and b.perm.ts > Ts("p") then ns.SendTo(sender, "p", EncodePerm(b.perm)) end
+  if officer and b.perm and b.perm.ts > Ts("p") then ns.SendTo(sender, "p", EncodePerm(b.perm)) end
+  if not member then return end
   if b.money and b.money.ts > Ts("m") then SendMoney(sender) end
   local qTs, qN = (theirs.q or ""):match("^(%w+)%.(%d+)$")
   qTs, qN = Enc.FromB36(qTs), tonumber(qN) or 0

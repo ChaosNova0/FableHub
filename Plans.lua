@@ -297,8 +297,8 @@ end
 ns.CommHandlers.P = function(sender, payload)
   local plan = P.Decode(payload)
   if not plan then return end
-  -- only accept plans last edited by an officer
-  if not P.IsOfficer(plan.author) then
+  -- only accept plans last edited by an officer, sent by an officer
+  if not ns.OfficerSent(sender, plan.author) or not ns.TimeOK(plan.ts) then
     ns.Debug("ignored plan from non-officer " .. tostring(plan.author))
     return
   end
@@ -317,6 +317,7 @@ ns.CommHandlers.C = function(sender, payload)
   if f[1] ~= "1" then return end
   local from, rank, ts = f[2], tonumber(f[3]), Enc.FromB36(f[4])
   if P.RankIndex(from) ~= 0 or not rank then return end -- only the Guild Master
+  if not ns.OfficerSent(sender, from) or not ns.TimeOK(ts) then return end
   local g = ns.GuildDB()
   if not g or (g.officerRankTs or 0) >= ts then return end
   g.officerRank, g.officerRankTs, g.officerRankBy = rank, ts, from
@@ -324,7 +325,7 @@ ns.CommHandlers.C = function(sender, payload)
 end
 
 ns.CommHandlers.Q = function(sender, payload)
-  if not ns.AmRelayFor(sender) then return end
+  if not ns.AmOfficerRelayFor(sender) then return end -- plans are officer data
   local theirs = {}
   for _, item in ipairs(Enc.Split(payload, ",")) do
     local id, ts = item:match("^(.-)=(%w+)$")

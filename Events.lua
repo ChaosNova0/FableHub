@@ -317,7 +317,9 @@ end
 ------------------------------------------------------------------------
 ns.CommHandlers.V = function(sender, payload)
   local ev = E.DecodeEvent(payload)
-  if not ev or not P.IsOfficer(ev.author) then return end
+  if not ev or not ns.TimeOK(ev.ts) then return end
+  -- the author must be an officer, and so must whoever passed it on
+  if not P.IsOfficer(ev.author) or not P.IsOfficer(sender) then return end
   local cur = E.Get(ev.id)
   if cur and (cur.ts or 0) >= ev.ts then return end
   E.All()[ev.id] = ev
@@ -329,7 +331,7 @@ ns.CommHandlers.S = function(sender, payload)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
   local occId, signer, ts, status = f[2], f[3], Enc.FromB36(f[4]), f[5]
-  if not occId or not signer or not (E.STATUS[status] or status == "R") then return end
+  if not occId or not signer or not (E.STATUS[status] or status == "R") or not ns.TimeOK(ts) then return end
   -- we're authoritative for our own sign-up, except officers importing from Raid-Helper
   if signer == ns.MyKey() and not P.IsOfficer(sender) then return end
   local g = G()
@@ -337,6 +339,9 @@ ns.CommHandlers.S = function(sender, payload)
   g.signups[occId] = g.signups[occId] or {}
   local cur = g.signups[occId][signer]
   if cur and (cur.ts or 0) >= ts then return end
+  -- only the player themselves or an officer can change a sign-up; copies passed
+  -- on by other members (catch-up) only fill in sign-ups we don't have yet
+  if cur and not ns.FirstHand(sender, signer) then return end
   local role = f[7]
   if role == "" or not ns.ROLE_NAMES[role] then role = nil end
   g.signups[occId][signer] = { status = status, char = f[6] ~= "" and f[6] or signer, role = role, note = f[8] or "", ts = ts,
@@ -346,8 +351,9 @@ end
 
 ns.CommHandlers.A = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not P.IsOfficer(f[3]) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[3]) then return end
   local occId, ts = f[2], Enc.FromB36(f[4])
+  if not ns.TimeOK(ts) then return end
   if not E.Occ(occId) then return end
   local a = AttRecord(occId)
   a.by = a.by or f[3]
@@ -362,8 +368,9 @@ end
 
 ns.CommHandlers.O = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not P.IsOfficer(f[6]) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[6]) then return end
   local occId, key, v, ts = f[2], f[3], f[4] == "1", Enc.FromB36(f[5])
+  if not ns.TimeOK(ts) then return end
   if not E.Occ(occId) then return end
   local a = AttRecord(occId)
   local cur = a.ov[key]
@@ -389,7 +396,10 @@ function E.SendDigest()
 end
 
 ns.CommHandlers.Y = function(sender, payload)
-  if not ns.AmRelayFor(sender) then return end
+  -- sign-ups come from the usual relay; raid nights and attendance (officer
+  -- data) only from an officer, since others won't accept them from members
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  if not member and not officer then return end
   local g = G()
   if not g then return end
   local theirs = {}
@@ -398,7 +408,7 @@ ns.CommHandlers.Y = function(sender, payload)
     if k then theirs[k] = v end
   end
   for id, ev in pairs(g.events) do
-    if Enc.FromB36(theirs["e:" .. id]) < (ev.ts or 0) then ns.Send("V", E.EncodeEvent(ev)) end
+    if officer and Enc.FromB36(theirs["e:" .. id]) < (ev.ts or 0) then ns.Send("V", E.EncodeEvent(ev)) end
   end
   for occId, list in pairs(g.signups) do
     local maxTs, n = 0, 0
@@ -406,12 +416,12 @@ ns.CommHandlers.Y = function(sender, payload)
     local t = theirs["s:" .. occId]
     local tTs, tN = 0, 0
     if t then local a, b = t:match("^(%w+)%.(%d+)$"); tTs, tN = Enc.FromB36(a), tonumber(b) or 0 end
-    if tTs < maxTs or tN < n then
+    if member and (tTs < maxTs or tN < n) then
       for signer, s in pairs(list) do ns.Send("S", EncodeSignup(occId, signer, s)) end
     end
   end
   for occId, a in pairs(g.attendance) do
-    if Enc.FromB36(theirs["a:" .. occId]) < (a.ts or 0) then
+    if officer and Enc.FromB36(theirs["a:" .. occId]) < (a.ts or 0) then
       if next(a.min) then ns.Send("A", EncodeAttendance(occId, a)) end
       for key, ov in pairs(a.ov) do
         ns.Send("O", table.concat({ "1", occId, key, ov.v and "1" or "0", Enc.ToB36(ov.ts), ov.by or "" }, "^"))

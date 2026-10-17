@@ -87,7 +87,7 @@ ns.CommHandlers.Z = function(sender, payload)
   local a = Decode(payload)
   if not a then return end
   local editor = Enc.Split(payload, "^")[9]
-  if not P.IsOfficer(editor) then return end
+  if not ns.OfficerSent(sender, editor) or not ns.TimeOK(a.ts) then return end
   local cur = All()[a.id]
   if cur and (cur.ts or 0) >= a.ts then return end
   a.editor = editor
@@ -110,7 +110,7 @@ function A.SendDigest()
 end
 
 ns.CommHandlers.J = function(sender, payload)
-  if not ns.AmRelayFor(sender) then return end
+  if not ns.AmOfficerRelayFor(sender) then return end -- officer data: officers pass it on
   local f = Enc.Split(payload, "^")
   local theirs = Enc.FromB36(f[2])
   local theirN = tonumber(f[3])

@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.16.6"
+ns.VERSION = "0.17.0"
 ns.PROTOCOL = 1
 
 FableHub = ns -- global handle, handy for /dump FableHub while testing

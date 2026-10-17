@@ -236,13 +236,29 @@ ns.CommHandlers.U = function(sender, payload)
 end
 
 -- relayed copies: accept without re-checking order of past changes
+local MAX_OPEN = 10 -- open requests per member, so nobody can flood the guild
+local function OpenBy(key)
+  local n = 0
+  for _, x in pairs(R.All()) do if x.by == key and x.status == "open" and R.Active(x) then n = n + 1 end end
+  return n
+end
 local baseHandler = ns.CommHandlers.N
 ns.CommHandlers.N = function(sender, payload)
   local r, actor = Decode(payload)
-  if not r then return end
+  if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
   local all = R.All()
   local old = all[r.id]
   if Stale(r) then return end
+  if not old and OpenBy(r.by) >= MAX_OPEN then return end
+  -- the actor must be the sender (or the sender an officer); copies passed on by
+  -- other members during catch-up only fill in requests we don't have yet
+  if not ns.FirstHand(sender, actor) then
+    if old then return end
+    if r.status == "open" then
+      if actor == r.by then all[r.id] = r; ns.Fire("REQUESTS_CHANGED") end
+      return
+    end
+  end
   if not old and r.status ~= "open" then
     -- we missed the earlier steps; trust it if the actor is part of the request or an officer
     if actor == r.by or actor == r.claimer or P.IsOfficer(actor) then

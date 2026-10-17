@@ -205,8 +205,14 @@ end
 ------------------------------------------------------------------------
 ns.CommHandlers.X = function(sender, payload)
   local char, e = Decode(payload)
-  if not char then return end
-  if e.manual and not P.IsOfficer(e.by) then return end
+  if not char or not ns.TimeOK(e.ts) then return end
+  -- guild members only (no made-up characters piling up in saved data)
+  if next(ns.roster) and not (ns.roster[char] and ns.roster[e.main]) then return end
+  if e.manual then
+    if not ns.OfficerSent(sender, e.by) then return end -- officer links: officers only
+  elseif All()[char] and not ns.FirstHand(sender, e.by) then
+    return -- copies passed on by other members only fill gaps
+  end
   if Store(char, e) then ns.Fire("ALTS_CHANGED") end
 end
 
@@ -220,14 +226,19 @@ function A.SendDigest()
 end
 
 ns.CommHandlers.G = function(sender, payload)
-  if not ns.AmRelayFor(sender) then return end
+  -- members' own links come from the usual relay; links an officer set by
+  -- hand only from an officer (others won't accept them from a member)
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  if not member and not officer then return end
   local f = Enc.Split(payload, "^")
   local theirs, theirN = Enc.FromB36(f[2]) or 0, Enc.FromB36(f[3]) or 0
   local n = 0
   for _ in pairs(All()) do n = n + 1 end
   local all = theirN < n -- they're missing some: send everything
   for char, e in pairs(All()) do
-    if all or (e.ts or 0) > theirs then ns.Send("X", Encode(char, e)) end
+    if (all or (e.ts or 0) > theirs) and ((e.manual and officer) or (not e.manual and member)) then
+      ns.Send("X", Encode(char, e))
+    end
   end
 end
 

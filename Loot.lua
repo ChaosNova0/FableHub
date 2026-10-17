@@ -305,7 +305,7 @@ end
 
 ns.CommHandlers.B = function(sender, payload)
   local tmb = L.DecodeTMB(payload)
-  if not tmb or not P.IsOfficer(tmb.by) then return end
+  if not tmb or not ns.OfficerSent(sender, tmb.by) or not ns.TimeOK(tmb.ts) then return end
   local g = G()
   if not g or (g.tmb and (g.tmb.ts or 0) >= tmb.ts) then return end
   g.tmb = tmb
@@ -375,7 +375,7 @@ end
 
 ns.CommHandlers.M = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not P.IsOfficer(f[7]) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[7]) or not ns.TimeOK(Enc.FromB36(f[6])) then return end
   local itemID, key = Enc.FromB36(f[2]), f[3]
   if itemID <= 0 or not key or key == "" then return end
   local typ = tonumber(f[4]) == L.TYPE_PRIO and L.TYPE_PRIO or L.TYPE_WISH
@@ -543,7 +543,7 @@ end
 
 ns.CommHandlers.L = function(sender, payload)
   local e = DecodeEntry(payload)
-  if not e or not P.IsOfficer(e.by) then return end
+  if not e or not ns.OfficerSent(sender, e.by) or not ns.TimeOK(e.ts) then return end
   local g = G()
   if not g then return end
   local cur = g.loot[e.id]
@@ -590,8 +590,10 @@ ns.CommHandlers.I = function(sender, payload)
   if f[1] ~= "1" or not f[2] then return end
   local g = G()
   if not g then return end
-  local changed = false
+  local changed, n = false, 0
   for _, id36 in ipairs(Enc.Split(f[3] or "", ",")) do
+    n = n + 1
+    if n > 200 then break end -- a raid never drops this many new items at once
     local id = Enc.FromB36(id36)
     if id > 0 and not g.seen[id] then g.seen[id] = f[2]; changed = true end
   end
@@ -617,13 +619,16 @@ function L.SendDigest()
 end
 
 ns.CommHandlers.K = function(sender, payload)
-  if not ns.AmRelayFor(sender) then return end
+  -- loot data is officer-only, so an officer passes it on; the shared list of
+  -- items seen dropping comes from the usual relay
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  if not member and not officer then return end
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
   local g = G()
   if not g then return end
   local tmbTs, lootTs, seenCount = Enc.FromB36(f[2]), Enc.FromB36(f[3]), tonumber(f[4]) or 0
-  if g.tmb and (g.tmb.ts or 0) > tmbTs then L.ShareTMB() end
+  if officer and g.tmb and (g.tmb.ts or 0) > tmbTs then L.ShareTMB() end
   -- counts (sent by 0.13.7+): if they have fewer entries than us, they missed older ones
   local theirLootN, theirManualN = tonumber(f[6]), tonumber(f[7])
   local myLootN, myManualN = 0, 0
@@ -633,17 +638,17 @@ ns.CommHandlers.K = function(sender, payload)
   local allManual = theirManualN and theirManualN < myManualN
   local cutoff = ns.Now() - 180 * 86400
   for _, e in pairs(g.loot) do
-    if (allLoot or (e.ts or 0) > lootTs) and (e.at or 0) > cutoff then ns.Send("L", EncodeEntry(e)) end
+    if officer and (allLoot or (e.ts or 0) > lootTs) and (e.at or 0) > cutoff then ns.Send("L", EncodeEntry(e)) end
   end
   local manualTs = Enc.FromB36(f[5])
   for itemID, list in pairs(Manual()) do
     for _, m in pairs(list) do
-      if allManual or (m.ts or 0) > manualTs then ns.Send("M", EncodeManual(itemID, m)) end
+      if officer and (allManual or (m.ts or 0) > manualTs) then ns.Send("M", EncodeManual(itemID, m)) end
     end
   end
   local mine = 0
   for _ in pairs(g.seen) do mine = mine + 1 end
-  if mine > seenCount then
+  if member and mine > seenCount then
     for id, inst in pairs(g.seen) do seenQueue[id] = inst end
     FlushSeen()
   end

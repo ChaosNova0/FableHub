@@ -163,6 +163,78 @@ local function AmRelayFor(requester)
 end
 ns.AmRelayFor = AmRelayFor
 
+------------------------------------------------------------------------
+-- Trust checks
+------------------------------------------------------------------------
+-- Who really sent a message, as a guild roster key. The chat system may
+-- spell names without Forever's last names, so an exact match is tried first,
+-- then a unique first-name match on the same realm. nil = not in the guild.
+local resolved = {}
+ns.On("ROSTER_CHANGED", function() resolved = {} end)
+local function FirstName(key)
+  local n = key:match("^([^-]+)") or key
+  return (n:match("^(%S+)") or n):lower()
+end
+local function RealmOf(key) return key:match("%-(.+)$") end
+function ns.ResolveSender(sender)
+  if not sender then return nil end
+  if ns.roster[sender] then return sender end
+  local hit = resolved[sender]
+  if hit ~= nil then return hit or nil end
+  local first, realm = FirstName(sender), RealmOf(sender)
+  local found
+  for key in pairs(ns.roster) do
+    local r = RealmOf(key)
+    if FirstName(key) == first and (not realm or not r or r == realm) then
+      if found then found = false break end -- two people share that name: can't tell
+      found = key
+    end
+  end
+  resolved[sender] = found or false
+  return found or nil
+end
+
+-- officer-only data: the author must be an officer, and it must come from that
+-- officer or be passed on by another officer (members can't pass it on)
+function ns.OfficerSent(sender, author)
+  local P = ns.Plans
+  if not author or author == "" or not P.IsOfficer(author) then return false end
+  return sender == author or P.IsOfficer(sender)
+end
+
+-- a change made by `actor` that arrived from `sender`: did it come first-hand
+-- (or from an officer)? Second-hand copies from members only fill gaps.
+function ns.FirstHand(sender, actor)
+  return sender == actor or ns.Plans.IsOfficer(sender)
+end
+
+-- timestamps more than 5 minutes ahead of the server clock are refused, so a
+-- forged "newest" change can't lock data forever
+function ns.TimeOK(ts)
+  return type(ts) == "number" and ts <= ns.Now() + 300
+end
+
+-- the online officer (by real guild rank, not test mode) who answers catch-up
+-- requests for officer-only data: newest FableHub version, then alphabetical
+local function RealOfficer(key)
+  local P = ns.Plans
+  local idx = P.RankIndex(key)
+  return idx ~= nil and idx <= P.OfficerRank()
+end
+ns.RealOfficer = RealOfficer
+function ns.AmOfficerRelayFor(requester)
+  local me = ns.MyKey()
+  if not RealOfficer(me) then return false end
+  local best, bestV = me, VersionNumber(ns.VERSION)
+  for key, ver in pairs(ns.present) do
+    if key ~= requester and key ~= me and ns.IsOnline(key) and RealOfficer(key) then
+      local v = VersionNumber(ver)
+      if v > bestV or (v == bestV and key < best) then best, bestV = key, v end
+    end
+  end
+  return best == me
+end
+
 -- catch-up digests other modules send at startup and on /fhub sync
 local digests = {}
 function ns.RegisterDigest(fn) digests[#digests + 1] = fn end
@@ -177,8 +249,9 @@ local answeredWant = 0
 local function HandleHello(sender, payload, isReply)
   local f = Enc.Split(payload, "^")
   local proto = tonumber(f[1]) or 0
-  -- prefer the sender's own idea of their key (matches their records)
-  if f[4] and f[4] ~= "" then sender = f[4] end
+  -- prefer the sender's own idea of their key (matches their records), but
+  -- only when we couldn't match them to the roster ourselves
+  if f[4] and f[4] ~= "" and not ns.roster[sender] then sender = f[4] end
   ns.present[sender] = f[2] or "?"
   local g = ns.GuildDB()
   if g then
@@ -239,7 +312,9 @@ end
 
 local function HandleFull(sender, payload)
   local rec = Enc.DecodeRecord(payload)
-  if not rec or rec.key == ns.MyKey() then return end
+  if not rec or rec.key == ns.MyKey() or not ns.TimeOK(rec.ts) then return end
+  -- only guild members (stops made-up members piling up in everyone's saved data)
+  if next(ns.roster) and not ns.roster[rec.key] then return end
   if ns.StoreRecord(rec) then
     ns.Debug("stored " .. rec.key .. " (from " .. sender .. ")")
   end
@@ -259,7 +334,16 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   if prefix ~= PREFIX or (channel ~= "GUILD" and channel ~= "WHISPER") then return end
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then return end
   sender = ns.NormalizeName(sender)
-  if not sender or sender == ns.MyKey() then return end
+  if not sender then return end
+  -- whispers can come from anyone on the realm: only guild members count.
+  -- (GUILD messages can only come from the guild.)
+  local who = ns.ResolveSender(sender)
+  if channel == "WHISPER" and not who then return end
+  sender = who or sender
+  if sender == ns.MyKey() then return end
+  -- FableHub never sends WoW formatting codes ("|"), so strip any: no fake
+  -- links, images or colours in names, notes or announcements
+  if text:find("|", 1, true) then text = text:gsub("|", "") end
 
   local msgType, id, part, total, payload = text:match("^(%a)#(%w+)#(%d+)#(%d+)#(.*)$")
   if not msgType then return end
