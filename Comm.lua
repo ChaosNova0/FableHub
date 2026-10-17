@@ -610,7 +610,9 @@ function ns.CheckGuildEcho()
   ns.guildMuted = true
   ns.Debug("no echo from the guild channel: sending by whisper")
   ns.Fire("GUILD_CHANNEL", false)
-  -- what we sent so far reached nobody: say hello again and resend our data
+  -- what we sent so far reached nobody: forget which records we already asked
+  -- for (those asks were lost), say hello again and resend our data
+  for k in pairs(wantedRecently) do wantedRecently[k] = nil end
   ns.Send("H", HelloPayload())
   C_Timer.After(10, function()
     ns.BroadcastRecord(ns.MyRecord())
