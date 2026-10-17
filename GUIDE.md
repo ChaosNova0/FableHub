@@ -1,4 +1,4 @@
-# FableHub 0.17.0
+# FableHub 0.17.1
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -79,14 +79,14 @@ Guild roster and profession tracker for WoW: Forever.
   - General: minimap button, open on Home each session, window opacity, reset window.
   - Alerts in chat (each can be turned off): raid nights you haven't signed up for, new craft requests you can make, open requests at login, your request claimed or done, and the request count on the minimap button.
   - Raids: run the ready check automatically.
-  - Officers: officer ranks (Guild Master), announce awarded loot in raid chat, test officer mode.
+  - Officers: officer ranks (Guild Master), announce awarded loot in raid chat.
   - Data: sync now, rescan your character, clear stored guild data (click twice), debug messages.
 - If EllesmereUI is installed, FableHub uses its accent colour.
 - **Open each of your profession windows once** after installing so your recipes are shared.
   Skill levels share automatically.
 
 ## Commands
-`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub testofficer` act as an officer on your computer only (for testing) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub reset` clear stored guild data · `/fhub debug`
+`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub reset` clear stored guild data · `/fhub debug`
 
 ## Credits
 Bundles LibDeflate (zlib licence) and rxi/json.lua (MIT) to read That's My BIS exports; licences are in the Libs folder. The font is Questrial (SIL Open Font License; licence in Media/Fonts).

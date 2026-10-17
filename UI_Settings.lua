@@ -144,11 +144,13 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   end)
   local rankNote = R:Note()
   local lootToggle = R:Option("Announce awarded loot in raid chat", "lootAnnounce")
-  R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)
-    FableHubDB.settings.testOfficer = v and true or nil
-    ns.Fire("PLANS_CHANGED")
-    UI.QueueRefresh()
-  end, "FableHub treats you as an officer so you can try officer features. Guildmates ignore anything you post as an officer unless your real rank is one.")
+  if ns.IsDeveloper() then -- only on the developer's Battle.net account
+    R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)
+      FableHubDB.settings.testOfficer = v and true or nil
+      ns.Fire("PLANS_CHANGED")
+      UI.QueueRefresh()
+    end, "FableHub treats you as an officer so you can try officer features. Guildmates ignore anything you post as an officer unless your real rank is one.")
+  end
 
   R:Header("Data")
   R:Button("Sync with guild now", 220, function() if ns.ForceSync then ns.ForceSync() end end)

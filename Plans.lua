@@ -25,8 +25,9 @@ function P.RankIndex(key)
   return r and r.rankIndex
 end
 
+-- test officer mode: only on the developer's Battle.net account, this computer only
 function P.TestMode()
-  return FableHubDB and FableHubDB.settings and FableHubDB.settings.testOfficer and true or false
+  return FableHubDB and FableHubDB.settings and FableHubDB.settings.testOfficer and ns.IsDeveloper() and true or false
 end
 
 function P.IsOfficer(key)

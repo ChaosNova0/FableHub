@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.17.0"
+ns.VERSION = "0.17.1"
 ns.PROTOCOL = 1
 
 FableHub = ns -- global handle, handy for /dump FableHub while testing
@@ -119,6 +119,24 @@ function ns.ClassColor(classFile)
     or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]))
   if c then return c.r, c.g, c.b end
   return 0.8, 0.8, 0.8
+end
+
+-- The developer's Battle.net account. Test officer mode only exists there.
+-- Stored as a hash so the BattleTag itself isn't written in the code.
+-- (Addons can read their own player's BattleTag, never anyone else's.)
+ns.DEV_TAG_HASH = 0
+function ns.TagHash(tag)
+  local h = 5381
+  for i = 1, #tag do h = (h * 33 + tag:lower():byte(i)) % 4294967296 end
+  return h
+end
+function ns.IsDeveloper()
+  if not ns.DEV_TAG_HASH then return false end
+  if ns._isDeveloper ~= nil then return ns._isDeveloper end
+  local ok, _, tag = pcall(function() return BNGetInfo() end)
+  if not ok or type(tag) ~= "string" or tag == "" then return false end -- not connected yet: ask again later
+  ns._isDeveloper = ns.TagHash(tag) == ns.DEV_TAG_HASH
+  return ns._isDeveloper
 end
 
 function ns.Now()
@@ -350,7 +368,7 @@ SlashCmdList.FABLEHUB = function(msg)
       if ns.UI and ns.UI.ApplyOpacity then ns.UI.ApplyOpacity() end
       ns.Print(("Window opacity set to %d%%."):format(n))
     end
-  elseif msg == "testofficer" then
+  elseif msg == "testofficer" and ns.IsDeveloper() then
     FableHubDB.settings.testOfficer = not FableHubDB.settings.testOfficer
     ns.Print(FableHubDB.settings.testOfficer
       and "Test officer mode ON. FableHub treats you as an officer on this computer only. Type /fhub testofficer again to turn it off."
@@ -373,6 +391,6 @@ SlashCmdList.FABLEHUB = function(msg)
     ns.Fire("DATA_CHANGED")
     ns.Print("Cleared stored guild data. It will refill as guildmates log in.")
   else
-    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub testofficer | /fhub status | /fhub reset | /fhub debug")
+    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub status | /fhub reset | /fhub debug")
   end
 end
