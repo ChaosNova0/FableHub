@@ -245,6 +245,13 @@ function D.Report()
   if #rl == 0 then add("Received: nothing yet")
   else for _, line in ipairs(rl) do add("Received from %s", line) end end
   add("Key realm: %s (character realm %s)", ns.KeyRealm and ns.KeyRealm() or "?", ns.MyRealm())
+  local state = ns.GuildChannelState and ns.GuildChannelState() or "?"
+  if state == "muted" then
+    local peers = ns.WhisperPeers and ns.WhisperPeers(false) or {}
+    add("Guild channel: our messages don't come back, so sending by whisper to %d FableHub user(s) online", #peers)
+  else
+    add("Guild channel: %s", state == "ok" and "working (our messages come back)" or state)
+  end
   add("")
 
   add("[Saved data]")

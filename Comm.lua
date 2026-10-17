@@ -32,6 +32,7 @@ local sendQueue = {}
 local buffers = {}       -- partial multi-part messages
 local nextId = math.random(0, 1295)
 local started = false
+local guildEcho, firstGuildSend = false, nil -- guild channel check (see WhisperPeers)
 
 ------------------------------------------------------------------------
 -- Sending (token bucket throttle: Blizzard allows ~10 burst then ~1/sec)
@@ -77,6 +78,10 @@ local function Pump()
     local to = item.form or (item.target and ns.WhisperTarget(item.target))
     if to then ns.NoteWhisper(to, item.target) end
     local result = SendRaw(item.msg, to, item.prefix)
+    if not to and result == "ok" and not firstGuildSend then
+      firstGuildSend = GetTime()
+      C_Timer.After(20, function() ns.CheckGuildEcho() end)
+    end
     if result == "retry" then
       item.tries = (item.tries or 0) + 1
       if item.tries > 10 then table.remove(sendQueue, 1) end
@@ -93,8 +98,33 @@ local function NewId()
   return Enc.ToB36(nextId)
 end
 
-local function Queue(msgType, payload, target, prefix, form)
+local Queue
+-- Guild channel check. The game echoes our own guild addon messages back to us.
+-- On Forever, characters on a connected realm (not the guild's home realm) get
+-- no echo and nobody hears them, though whispers still work. If nothing comes
+-- back within 20 s of our first guild send, FableHub sends by whisper instead:
+-- hellos to every online member (so FableHub users learn about us), everything
+-- else to the FableHub users we've heard from.
+ns.guildMuted = false
+local function WhisperPeers(everyone)
+  local list = {}
+  local me = ns.MyKey()
+  if everyone then
+    for key, r in pairs(ns.roster) do if r.online and key ~= me then list[#list + 1] = key end end
+  else
+    for key in pairs(ns.present) do if key ~= me and ns.IsOnline(key) then list[#list + 1] = key end end
+  end
+  table.sort(list)
+  return list
+end
+ns.WhisperPeers = WhisperPeers
+
+function Queue(msgType, payload, target, prefix, form)
   payload = payload or ""
+  if not target and ns.guildMuted and not prefix then
+    for _, key in ipairs(WhisperPeers(msgType == "H")) do Queue(msgType, payload, key) end
+    return
+  end
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
   for i = 1, total do
@@ -514,7 +544,17 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   end
   if channel == "WHISPER" and not who then return end
   sender = who or sender
-  if sender == ns.MyKey() then return end
+  if sender == ns.MyKey() then
+    if channel == "GUILD" and not guildEcho then
+      guildEcho = true
+      if ns.guildMuted then
+        ns.guildMuted = false
+        ns.Debug("guild channel works again")
+        ns.Fire("GUILD_CHANNEL", true)
+      end
+    end
+    return
+  end
   -- FableHub never sends WoW formatting codes ("|"), so strip any: no fake
   -- links, images or colours in names, notes or announcements
   if text:find("|", 1, true) then text = text:gsub("|", "") end
@@ -563,6 +603,24 @@ local function Start()
   ns.Send("H", HelloPayload())
   LegacyHello()
   SendAllDigests()
+end
+
+function ns.CheckGuildEcho()
+  if guildEcho or ns.guildMuted or not firstGuildSend then return end
+  ns.guildMuted = true
+  ns.Debug("no echo from the guild channel: sending by whisper")
+  ns.Fire("GUILD_CHANNEL", false)
+  -- what we sent so far reached nobody: say hello again and resend our data
+  ns.Send("H", HelloPayload())
+  C_Timer.After(10, function()
+    ns.BroadcastRecord(ns.MyRecord())
+    SendAllDigests()
+  end)
+end
+function ns.GuildChannelState()
+  if guildEcho then return "ok" end
+  if ns.guildMuted then return "muted" end
+  return firstGuildSend and "checking" or "not used yet"
 end
 
 function ns.ForceSync()
