@@ -1,0 +1,340 @@
+-- Plans: saved raid plans, who may edit them, and sharing them with the guild.
+--
+-- plan = { id, name, size (10/20/40), ts, author, shared, dirty, deleted,
+--          slots = { [slotIndex] = key }, roles = { [key] = role }, extras = { [key] = classFile } }
+-- slot index = (group - 1) * 5 + position
+
+local _, ns = ...
+local Enc = ns.Encode
+local P = {}
+ns.Plans = P
+
+P.SIZES = { 10, 20, 40 }
+
+------------------------------------------------------------------------
+-- Permissions: guild ranks up to officerRank (0 = Guild Master) are officers.
+-- The Guild Master sets the threshold and it syncs to everyone.
+------------------------------------------------------------------------
+function P.OfficerRank()
+  local g = ns.GuildDB()
+  return (g and g.officerRank) or 1
+end
+
+function P.RankIndex(key)
+  local r = ns.roster[key]
+  return r and r.rankIndex
+end
+
+function P.TestMode()
+  return FableHubDB and FableHubDB.settings and FableHubDB.settings.testOfficer and true or false
+end
+
+function P.IsOfficer(key)
+  -- local test mode: only your own addon treats you as an officer
+  if key == ns.MyKey() and P.TestMode() then return true end
+  local idx = P.RankIndex(key)
+  return idx ~= nil and idx <= P.OfficerRank()
+end
+
+function P.CanEdit()
+  return P.IsOfficer(ns.MyKey())
+end
+
+function P.IsGuildMaster()
+  return P.RankIndex(ns.MyKey()) == 0
+end
+
+function P.RankNames()
+  local out = {}
+  local n = (GuildControlGetNumRanks and GuildControlGetNumRanks()) or 0
+  for i = 1, n do out[i - 1] = GuildControlGetRankName and GuildControlGetRankName(i) or ("Rank " .. i) end
+  return out, n
+end
+
+function P.SetOfficerRank(idx)
+  local g = ns.GuildDB()
+  if not g or not P.IsGuildMaster() then return false end
+  g.officerRank = idx
+  g.officerRankTs = ns.Now()
+  g.officerRankBy = ns.MyKey()
+  P.SendConfig()
+  ns.Fire("PLANS_CHANGED")
+  return true
+end
+
+------------------------------------------------------------------------
+-- Storage
+------------------------------------------------------------------------
+function P.All()
+  local g = ns.GuildDB()
+  if not g then return {} end
+  g.plans = g.plans or {}
+  return g.plans
+end
+
+function P.List()
+  local out = {}
+  for _, plan in pairs(P.All()) do
+    if not plan.deleted then out[#out + 1] = plan end
+  end
+  table.sort(out, function(a, b) return (a.name or ""):lower() < (b.name or ""):lower() end)
+  return out
+end
+
+function P.Get(id) return id and P.All()[id] end
+
+local counter = 0
+function P.New(name, size)
+  if not P.CanEdit() then return nil end
+  counter = counter + 1
+  local id = Enc.ToB36(ns.Now()) .. Enc.ToB36(math.random(0, 1295)) .. counter
+  local plan = {
+    id = id, name = name or "New raid", size = size or 20, ts = ns.Now(), author = ns.MyKey(),
+    shared = false, dirty = true, slots = {}, roles = {}, extras = {},
+  }
+  P.All()[id] = plan
+  ns.Fire("PLANS_CHANGED")
+  return plan
+end
+
+function P.Touch(plan)
+  plan.dirty = true
+  ns.Fire("PLANS_CHANGED")
+end
+
+function P.SlotOf(plan, key)
+  for i, k in pairs(plan.slots) do if k == key then return i end end
+end
+
+-- Put key in slot; if the key is already in another slot, swap them.
+function P.Place(plan, key, slot)
+  if slot < 1 or slot > plan.size then return end
+  local from = P.SlotOf(plan, key)
+  local occupant = plan.slots[slot]
+  -- moving within the plan swaps; a new person dropped on someone replaces them
+  if from then plan.slots[from] = occupant end
+  plan.slots[slot] = key
+  P.Touch(plan)
+end
+
+function P.Remove(plan, slot)
+  plan.slots[slot] = nil
+  P.Touch(plan)
+end
+
+function P.Resize(plan, size)
+  plan.size = size
+  for i in pairs(plan.slots) do if i > size then plan.slots[i] = nil end end
+  P.Touch(plan)
+end
+
+function P.Count(plan)
+  local n = 0
+  for i, k in pairs(plan.slots) do if k and i <= plan.size then n = n + 1 end end
+  return n
+end
+
+function P.AddExtra(plan, name, classFile)
+  local key = ns.NormalizeName((name or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+  if not key or key == "" then return nil end
+  plan.extras[key] = classFile
+  P.Touch(plan)
+  return key
+end
+
+------------------------------------------------------------------------
+-- Who someone is, for planning purposes
+------------------------------------------------------------------------
+-- class, role, spec, buff set (and whether buffs were detected or assumed)
+function P.Describe(plan, key)
+  local g = ns.GuildDB()
+  local rec = g and g.members[key]
+  if key == ns.MyKey() then rec = ns.MyRecord() end
+  local r = ns.roster[key]
+  local classFile = (rec and rec.class) or (r and r.class) or (plan and plan.extras and plan.extras[key])
+  local spec = rec and rec.spec
+  local role = plan and plan.roles and plan.roles[key]
+  local roleSource = role and "plan" or nil
+  if not role and spec and classFile and ns.TREE_ROLES[classFile] then
+    role = ns.TREE_ROLES[classFile][spec.tree]
+    roleSource = role and "talents" or nil
+  end
+  if not role and classFile then role, roleSource = ns.DEFAULT_ROLE[classFile], "guess" end
+  local buffs, detected = {}, false
+  if rec and rec.buffs then
+    buffs, detected = rec.buffs, true
+  elseif classFile then
+    for _, b in ipairs(ns.BUFFS) do
+      if b.base and b.classes[classFile] then buffs[b.id] = true end
+    end
+  end
+  return {
+    key = key, class = classFile, role = role, roleSource = roleSource, spec = spec,
+    buffs = buffs, detected = detected, level = (r and r.level) or (rec and rec.level),
+    online = ns.IsOnline(key), extra = plan and plan.extras and plan.extras[key] ~= nil and not r,
+  }
+end
+
+-- Coverage for a plan: providers per buff (raid-wide), per-group party buffs, role counts
+function P.Coverage(plan)
+  local cov = { providers = {}, groups = {}, roles = { TANK = 0, HEALER = 0, MELEE = 0, RANGED = 0 }, count = 0,
+                paladins = 0 }
+  local groupCount = math.ceil(plan.size / 5)
+  for gi = 1, groupCount do cov.groups[gi] = { party = {}, members = {} } end
+  for slot = 1, plan.size do
+    local key = plan.slots[slot]
+    if key then
+      local d = P.Describe(plan, key)
+      local gi = math.ceil(slot / 5)
+      cov.count = cov.count + 1
+      if d.role then cov.roles[d.role] = (cov.roles[d.role] or 0) + 1 end
+      if d.class == "PALADIN" then cov.paladins = cov.paladins + 1 end
+      table.insert(cov.groups[gi].members, d)
+      for id in pairs(d.buffs) do
+        local b = ns.BUFF_BY_ID[id]
+        if b then
+          cov.providers[id] = cov.providers[id] or {}
+          table.insert(cov.providers[id], d)
+          if b.cat == "party" then
+            cov.groups[gi].party[id] = cov.groups[gi].party[id] or {}
+            table.insert(cov.groups[gi].party[id], d)
+          end
+        end
+      end
+    end
+  end
+  return cov
+end
+
+------------------------------------------------------------------------
+-- Encoding
+--   "1^id^ts^author^size^name^deleted^slots^roles^extras"
+------------------------------------------------------------------------
+local function Safe(s) return (tostring(s or ""):gsub("[%^,=#]", " ")) end
+
+function P.Encode(plan)
+  local slots, roles, extras = {}, {}, {}
+  for i, k in pairs(plan.slots) do slots[#slots + 1] = i .. "=" .. Safe(k) end
+  for k, r in pairs(plan.roles) do roles[#roles + 1] = Safe(k) .. "=" .. (ns.ROLE_SHORT[r] or "") end
+  for k, c in pairs(plan.extras) do extras[#extras + 1] = Safe(k) .. "=" .. Safe(c) end
+  table.sort(slots); table.sort(roles); table.sort(extras)
+  return table.concat({
+    "1", Safe(plan.id), Enc.ToB36(plan.ts), Safe(plan.author), tostring(plan.size), Safe(plan.name),
+    plan.deleted and "1" or "0", table.concat(slots, ","), table.concat(roles, ","), table.concat(extras, ","),
+  }, "^")
+end
+
+local ROLE_FROM_SHORT = { T = "TANK", H = "HEALER", M = "MELEE", R = "RANGED" }
+
+function P.Decode(text)
+  local f = Enc.Split(text, "^")
+  if f[1] ~= "1" or not f[2] or f[2] == "" then return nil end
+  local size = tonumber(f[5]) or 20
+  if size ~= 10 and size ~= 20 and size ~= 40 then size = 20 end
+  local plan = {
+    id = f[2], ts = Enc.FromB36(f[3]), author = f[4], size = size, name = f[6] or "Raid",
+    deleted = f[7] == "1", slots = {}, roles = {}, extras = {}, shared = true, dirty = false,
+  }
+  for _, item in ipairs(Enc.Split(f[8] or "", ",")) do
+    local i, k = item:match("^(%d+)=(.+)$")
+    i = tonumber(i)
+    if i and i >= 1 and i <= size then plan.slots[i] = k end
+  end
+  for _, item in ipairs(Enc.Split(f[9] or "", ",")) do
+    local k, r = item:match("^(.+)=(%a)$")
+    if k and ROLE_FROM_SHORT[r] then plan.roles[k] = ROLE_FROM_SHORT[r] end
+  end
+  for _, item in ipairs(Enc.Split(f[10] or "", ",")) do
+    local k, c = item:match("^(.+)=(%u+)$")
+    if k then plan.extras[k] = c end
+  end
+  return plan
+end
+
+------------------------------------------------------------------------
+-- Sharing
+------------------------------------------------------------------------
+function P.Share(plan)
+  if not P.CanEdit() then return false end
+  if P.TestMode() and (P.RankIndex(ns.MyKey()) or 99) > P.OfficerRank() then
+    ns.Print("Test officer mode: guildmates will ignore this plan, because your real rank isn't an officer rank.")
+  end
+  plan.ts = ns.Now()
+  plan.author = ns.MyKey()
+  plan.shared, plan.dirty = true, false
+  ns.Send("P", P.Encode(plan))
+  ns.Fire("PLANS_CHANGED")
+  return true
+end
+
+function P.Delete(plan)
+  if not P.CanEdit() then return false end
+  plan.deleted = true
+  plan.ts = ns.Now()
+  plan.author = ns.MyKey()
+  plan.slots, plan.roles, plan.extras = {}, {}, {}
+  if plan.shared then ns.Send("P", P.Encode(plan)) else P.All()[plan.id] = nil end
+  ns.Fire("PLANS_CHANGED")
+  return true
+end
+
+function P.SendConfig()
+  local g = ns.GuildDB()
+  if not g or not g.officerRankTs then return end
+  ns.Send("C", table.concat({ "1", g.officerRankBy or ns.MyKey() or "", tostring(g.officerRank or 1), Enc.ToB36(g.officerRankTs) }, "^"))
+end
+
+function ns.SendPlanDigest()
+  local g = ns.GuildDB()
+  if not g then return end
+  local parts = { "!cfg=" .. Enc.ToB36(g.officerRankTs or 0) }
+  for id, plan in pairs(P.All()) do
+    if plan.shared then parts[#parts + 1] = Safe(id) .. "=" .. Enc.ToB36(plan.ts or 0) end
+  end
+  ns.Send("Q", table.concat(parts, ","))
+end
+
+ns.CommHandlers.P = function(sender, payload)
+  local plan = P.Decode(payload)
+  if not plan then return end
+  -- only accept plans last edited by an officer
+  if not P.IsOfficer(plan.author) then
+    ns.Debug("ignored plan from non-officer " .. tostring(plan.author))
+    return
+  end
+  local cur = P.All()[plan.id]
+  if cur and (cur.ts or 0) >= plan.ts then return end
+  if cur and cur.dirty and plan.author ~= ns.MyKey() then
+    ns.Print(("%s updated the raid plan \"%s\" while you had unshared changes. Their version replaced yours.")
+      :format(ns.ShortName(plan.author), plan.name))
+  end
+  P.All()[plan.id] = plan
+  ns.Fire("PLANS_CHANGED")
+end
+
+ns.CommHandlers.C = function(sender, payload)
+  local f = Enc.Split(payload, "^")
+  if f[1] ~= "1" then return end
+  local from, rank, ts = f[2], tonumber(f[3]), Enc.FromB36(f[4])
+  if P.RankIndex(from) ~= 0 or not rank then return end -- only the Guild Master
+  local g = ns.GuildDB()
+  if not g or (g.officerRankTs or 0) >= ts then return end
+  g.officerRank, g.officerRankTs, g.officerRankBy = rank, ts, from
+  ns.Fire("PLANS_CHANGED")
+end
+
+ns.CommHandlers.Q = function(sender, payload)
+  if not ns.AmRelayFor(sender) then return end
+  local theirs = {}
+  for _, item in ipairs(Enc.Split(payload, ",")) do
+    local id, ts = item:match("^(.-)=(%w+)$")
+    if id then theirs[id] = Enc.FromB36(ts) end
+  end
+  local g = ns.GuildDB()
+  if g and (g.officerRankTs or 0) > (theirs["!cfg"] or 0) then P.SendConfig() end
+  for id, plan in pairs(P.All()) do
+    if plan.shared and (theirs[id] or 0) < (plan.ts or 0) then ns.Send("P", P.Encode(plan)) end
+  end
+end
+
+ns.RegisterDigest(function() ns.SendPlanDigest() end)

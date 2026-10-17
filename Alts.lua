@@ -1,0 +1,242 @@
+-- Alts: which guild characters belong to the same player.
+--
+-- Battle.net IDs aren't available to addons, so each member's FableHub links the
+-- characters it knows from their own account (FableHubDB is shared by every
+-- character on the account). Officers can link or unlink anyone by hand.
+--
+-- g.alts[charKey] = { main = mainKey, ts, by, manual }
+-- The newest entry for a character wins. A member's own entries keep the time of
+-- their last change (main picked or alt added), so an officer's fix sticks until
+-- the member changes something themselves.
+
+local _, ns = ...
+local Enc, P = ns.Encode, ns.Plans
+local A = {}
+ns.Alts = A
+
+local function All()
+  local g = ns.GuildDB()
+  if not g then return {} end
+  g.alts = g.alts or {}
+  return g.alts
+end
+A.All = All
+
+local function Safe(s) return (tostring(s or ""):gsub("[%^|]", " ")) end
+
+local function Encode(char, e)
+  return table.concat({ "1", Safe(char), Safe(e.main), Enc.ToB36(e.ts or 0), e.manual and "1" or "0", Safe(e.by) }, "^")
+end
+
+local function Decode(text)
+  local f = Enc.Split(text, "^")
+  if f[1] ~= "1" or not f[2] or f[2] == "" or not f[3] or f[3] == "" then return nil end
+  return f[2], { main = f[3], ts = Enc.FromB36(f[4]) or 0, manual = f[5] == "1" or nil, by = f[6] }
+end
+
+local function Store(char, e)
+  local cur = All()[char]
+  if cur and (cur.ts or 0) >= (e.ts or 0) then return false end
+  All()[char] = e
+  return true
+end
+
+-- the main a character belongs to (itself if not linked)
+function A.MainOf(key)
+  local e = All()[key]
+  if e and e.main and e.main ~= "" then return e.main end
+  return key
+end
+
+local function Level(key)
+  local r = ns.roster[key]
+  local rec = FableHubDB.chars[key]
+  return (r and r.level) or (rec and rec.level) or 0
+end
+A.Level = Level
+
+------------------------------------------------------------------------
+-- My own characters
+------------------------------------------------------------------------
+-- my account's characters that are in this guild
+function A.MyChars()
+  local out, seen = {}, {}
+  local me = ns.MyKey()
+  if me then out[1] = me; seen[me] = true end
+  for key in pairs(FableHubDB.chars or {}) do
+    if not seen[key] and ns.roster[key] then out[#out + 1] = key; seen[key] = true end
+  end
+  table.sort(out)
+  return out
+end
+
+-- highest level first, then name
+function A.DefaultMain(chars)
+  local best
+  for _, key in ipairs(chars) do
+    if not best or Level(key) > Level(best) or (Level(key) == Level(best) and key < best) then best = key end
+  end
+  return best
+end
+
+function A.MyMain()
+  local chars = A.MyChars()
+  local g = ns.GuildDB()
+  local picked = g and g.myMain
+  for _, key in ipairs(chars) do if key == picked then return picked end end
+  return A.DefaultMain(chars)
+end
+
+-- share my links with the guild
+function A.Publish()
+  local g = ns.GuildDB()
+  if not g or not IsInGuild() then return end
+  local chars = A.MyChars()
+  if #chars < 2 then return end
+  local main = A.MyMain()
+  local sig = main .. ":" .. table.concat(chars, ",")
+  if g.myAltsSig ~= sig then
+    g.myAltsSig = sig
+    g.myAltsTs = math.max(ns.Now(), (g.myAltsTs or 0) + 1)
+  end
+  local changed = false
+  for _, key in ipairs(chars) do
+    local e = { main = main, ts = g.myAltsTs, by = ns.MyKey() }
+    if Store(key, e) then changed = true end
+    ns.Send("X", Encode(key, All()[key]))
+  end
+  if changed then ns.Fire("ALTS_CHANGED") end
+end
+
+function A.SetMyMain(key)
+  local g = ns.GuildDB()
+  if not g then return end
+  g.myMain = key
+  A.Publish()
+end
+
+------------------------------------------------------------------------
+-- Officer edits
+------------------------------------------------------------------------
+local function Officer(char, main)
+  if not P.CanEdit() then return false end
+  local cur = All()[char]
+  local e = { main = main, ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1), by = ns.MyKey(), manual = true }
+  All()[char] = e
+  ns.Send("X", Encode(char, e))
+  return true
+end
+
+-- link char (and anyone linked to it) under main
+function A.Link(char, main)
+  if not P.CanEdit() or not char or not main or char == main then return false end
+  main = A.MainOf(main)
+  if main == char then return false end
+  if A.MainOf(main) ~= main or not All()[main] then Officer(main, main) end
+  -- an alt moves on its own; a main brings its alts along
+  local moving = A.MainOf(char) == char and A.GroupOf(char) or { char }
+  for _, key in ipairs(moving) do Officer(key, main) end
+  ns.Fire("ALTS_CHANGED")
+  return true
+end
+
+-- take one character out of its group
+function A.Unlink(char)
+  if not P.CanEdit() or A.MainOf(char) == char then return false end
+  Officer(char, char)
+  ns.Fire("ALTS_CHANGED")
+  return true
+end
+
+-- make char the main of its group
+function A.MakeMain(char)
+  if not P.CanEdit() then return false end
+  for _, key in ipairs(A.GroupOf(char)) do Officer(key, char) end
+  ns.Fire("ALTS_CHANGED")
+  return true
+end
+
+-- every guild character linked with key (including key)
+function A.GroupOf(key)
+  local main = A.MainOf(key)
+  local out, seen = { main }, { [main] = true }
+  for char, e in pairs(All()) do
+    if not seen[char] and e.main == main then out[#out + 1] = char; seen[char] = true end
+  end
+  if not seen[key] then out[#out + 1] = key end
+  return out
+end
+
+------------------------------------------------------------------------
+-- Groups for display: only characters in the guild roster
+------------------------------------------------------------------------
+-- returns groups { main = key, alts = { keys } } (only those with alts) and singles { keys }
+function A.Groups()
+  local groups, byMain, singles = {}, {}, {}
+  for _, key in ipairs(ns.rosterOrder) do
+    local main = A.MainOf(key)
+    local grp = byMain[main]
+    if not grp then
+      grp = { main = main, alts = {} }
+      byMain[main] = grp
+      groups[#groups + 1] = grp
+    end
+    if key ~= main then grp.alts[#grp.alts + 1] = key end
+  end
+  local out = {}
+  for _, grp in ipairs(groups) do
+    if #grp.alts > 0 then
+      table.sort(grp.alts, function(a, b)
+        if Level(a) ~= Level(b) then return Level(a) > Level(b) end
+        return a < b
+      end)
+      out[#out + 1] = grp
+    elseif ns.roster[grp.main] then
+      singles[#singles + 1] = grp.main
+    end
+  end
+  table.sort(out, function(a, b) return ns.ShortName(a.main):lower() < ns.ShortName(b.main):lower() end)
+  table.sort(singles, function(a, b) return ns.ShortName(a):lower() < ns.ShortName(b):lower() end)
+  return out, singles
+end
+
+------------------------------------------------------------------------
+-- Sync
+------------------------------------------------------------------------
+ns.CommHandlers.X = function(sender, payload)
+  local char, e = Decode(payload)
+  if not char then return end
+  if e.manual and not P.IsOfficer(e.by) then return end
+  if Store(char, e) then ns.Fire("ALTS_CHANGED") end
+end
+
+function A.SendDigest()
+  local maxTs, n = 0, 0
+  for _, e in pairs(All()) do
+    n = n + 1
+    if (e.ts or 0) > maxTs then maxTs = e.ts end
+  end
+  ns.Send("G", "1^" .. Enc.ToB36(maxTs) .. "^" .. Enc.ToB36(n))
+end
+
+ns.CommHandlers.G = function(sender, payload)
+  if not ns.AmRelayFor(sender) then return end
+  local f = Enc.Split(payload, "^")
+  local theirs, theirN = Enc.FromB36(f[2]) or 0, Enc.FromB36(f[3]) or 0
+  local n = 0
+  for _ in pairs(All()) do n = n + 1 end
+  local all = theirN < n -- they're missing some: send everything
+  for char, e in pairs(All()) do
+    if all or (e.ts or 0) > theirs then ns.Send("X", Encode(char, e)) end
+  end
+end
+
+-- publish once the guild roster has loaded after login
+local publishQueued
+ns.On("ROSTER_CHANGED", function()
+  if publishQueued then return end
+  publishQueued = true
+  C_Timer.After(12, function() A.Publish() end)
+end)
+
+ns.RegisterDigest(function() A.SendDigest() end)
