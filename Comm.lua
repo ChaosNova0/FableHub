@@ -52,6 +52,7 @@ local function SendRaw(msg, target, prefix)
   else
     ok, res = pcall(C_ChatInfo.SendAddonMessage, prefix or PREFIX, msg, "GUILD")
   end
+  if ns.Diag then ns.Diag.NoteSend(ok, res, target) end
   if not ok then
     ns.Debug("send error: " .. tostring(res))
     return "drop"
@@ -133,12 +134,13 @@ function ns.WhisperCandidates(key)
   end
   local g = ns.GuildDB and ns.GuildDB()
   add(g and g.whisperNames and g.whisperNames[key])
-  -- what Blizzard's own guild window uses: no realm for people on our realm
-  -- (in the Forever beta, "Name Lastname-Realm" is refused but "Name Lastname" works)
-  if Ambiguate then add(Ambiguate(key, "none")) end
-  add(key)
+  -- "First Lastname" with no realm: what works in Forever (confirmed in game;
+  -- "Name Lastname-Realm" is refused, even on connected realms)
   local realm = key:match("%-(.+)$")
   local short = ns.ShortName(key)
+  add(short)
+  if Ambiguate then add(Ambiguate(key, "none")) end
+  add(key)
   local r = ns.roster[key]
   if r and r.guid and GetPlayerInfoByGUID then
     -- the game's own name for the character (may differ from the roster's)
@@ -493,6 +495,7 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   local legacy = PREFIX ~= LEGACY_PREFIX and prefix == LEGACY_PREFIX
   if prefix ~= PREFIX and not legacy then return end
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then return end
+  if ns.Diag then ns.Diag.NoteRecv(sender, channel, prefix) end
   sender = ns.NormalizeName(sender)
   if not sender then return end
   -- whispers can come from anyone on the realm: only guild members count.

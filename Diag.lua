@@ -8,6 +8,13 @@ local Enc = ns.Encode
 local D = {}
 ns.Diag = D
 
+local function Count(t)
+  local n = 0
+  for _ in pairs(t or {}) do n = n + 1 end
+  return n
+end
+D.Count = Count
+
 ------------------------------------------------------------------------
 -- Names as the chat system sent them, when they didn't match the roster exactly
 ------------------------------------------------------------------------
@@ -20,6 +27,25 @@ function D.NoteSender(raw, resolved)
     if n >= 30 then return end
   end
   D.senders[raw] = resolved or false
+end
+
+------------------------------------------------------------------------
+-- Traffic: what was sent and refused, and what arrived from whom (raw names)
+------------------------------------------------------------------------
+D.traffic = { sent = 0, refused = {}, recv = {} }
+function D.NoteSend(ok, res, target)
+  local t = D.traffic
+  if ok and (res == nil or res == true or res == 0) then t.sent = t.sent + 1
+  else
+    local code = ok and tostring(res) or ("error: " .. tostring(res))
+    t.refused[code] = (t.refused[code] or 0) + 1
+  end
+end
+function D.NoteRecv(raw, channel, prefix)
+  local key = tostring(raw) .. " (" .. tostring(channel) .. (prefix ~= ns.PREFIX and (", " .. tostring(prefix)) or "") .. ")"
+  local r = D.traffic.recv
+  if r[key] == nil and D.Count(r) >= 30 then return end
+  r[key] = (r[key] or 0) + 1
 end
 
 ------------------------------------------------------------------------
@@ -124,11 +150,7 @@ end
 ------------------------------------------------------------------------
 -- The report
 ------------------------------------------------------------------------
-local function Count(t)
-  local n = 0
-  for _ in pairs(t or {}) do n = n + 1 end
-  return n
-end
+
 
 local function FontCheck()
   local T = ns.Theme
@@ -211,6 +233,19 @@ function D.Report()
     end
     add("")
   end
+
+  add("[Traffic]")
+  local t = D.traffic
+  local refused = {}
+  for code, n in pairs(t.refused) do refused[#refused + 1] = "code " .. code .. " x" .. n end
+  add("Sent %d messages%s", t.sent, #refused > 0 and ("; refused: " .. table.concat(refused, ", ")) or ", none refused")
+  local rl = {}
+  for who, n in pairs(t.recv) do rl[#rl + 1] = who .. " x" .. n end
+  table.sort(rl)
+  if #rl == 0 then add("Received: nothing yet")
+  else for _, line in ipairs(rl) do add("Received from %s", line) end end
+  add("Key realm: %s (character realm %s)", ns.KeyRealm and ns.KeyRealm() or "?", ns.MyRealm())
+  add("")
 
   add("[Saved data]")
   local g = ns.GuildDB and ns.GuildDB()

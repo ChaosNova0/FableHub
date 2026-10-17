@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.18.2"
+ns.VERSION = "0.18.3"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves
@@ -79,12 +79,26 @@ function ns.MyRealm()
   return realm
 end
 
+-- The realm in FableHub's character keys: the guild's home realm, so every
+-- client labels everyone the same way. (On connected realms the roster gives
+-- names without a realm, and each client used to add its own realm, so the
+-- same character got different keys on different clients.)
+function ns.KeyRealm()
+  if IsInGuild and IsInGuild() and GetGuildInfo then
+    local _, _, _, guildRealm = GetGuildInfo("player")
+    if type(guildRealm) == "string" and guildRealm ~= "" then return (guildRealm:gsub("[%s%-]", "")) end
+  end
+  return ns.MyRealm()
+end
+
+-- "Name" or "Name-AnyRealm" -> "Name-<KeyRealm>" (guild members are all on
+-- connected realms; Forever names are unique "First Lastname")
 function ns.NormalizeName(name)
   if not name or name == "" then return nil end
-  if name:find("-", 1, true) then return name end
-  local realm = ns.MyRealm()
-  if realm == "" then return name end
-  return name .. "-" .. realm
+  local base = name:match("^([^-]+)") or name
+  local realm = ns.KeyRealm()
+  if realm == "" then return base end
+  return base .. "-" .. realm
 end
 
 -- Our own key. The guild roster is the source of truth (Forever adds last
@@ -94,8 +108,19 @@ function ns.MyKey()
   if ns._myKey then return ns._myKey end
   local name, realm = UnitFullName("player")
   if not name then return nil end
-  if not realm or realm == "" then realm = ns.MyRealm() end
-  ns._myKey = (realm ~= "" and (name .. "-" .. realm)) or name
+  local legacy = name .. "-" .. ((realm and realm ~= "") and realm or ns.MyRealm()) -- how older versions keyed us
+  -- Forever reports the last name where the realm would be ("Sniffin", "Tootsies")
+  if realm and realm ~= "" and realm ~= ns.MyRealm() then name = name .. " " .. realm end
+  ns._myKey = ns.NormalizeName(name)
+  -- move our own record saved under an older spelling
+  local chars = FableHubDB and FableHubDB.chars
+  if chars and legacy ~= ns._myKey and chars[legacy] then
+    if not chars[ns._myKey] or (chars[ns._myKey].ts or 0) < (chars[legacy].ts or 0) then
+      chars[ns._myKey] = chars[legacy]
+      chars[ns._myKey].key = ns._myKey
+    end
+    chars[legacy] = nil
+  end
   return ns._myKey
 end
 
