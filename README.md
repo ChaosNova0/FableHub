@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.18.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.18.1-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -52,7 +52,7 @@ FableHub is useful once a few guild members have it, and more useful once an off
 | `/fhub opacity 50-100` | Window opacity (default 85) |
 | `/fhub resetwindow` | Put the window back in the middle at its default size |
 | `/fhub bug` | Open a report (version, client build, name matching, recent errors) to copy into Discord |
-| `/fhub ping Name` | Test whether FableHub's whispers reach a guildmate |
+| `/fhub ping Name` | Test which spelling of a guildmate's name FableHub can whisper (works even if they don't have FableHub) |
 | `/fhub reset` | Clear stored guild data |
 | `/fhub debug` | Toggle debug messages |
 

@@ -1,4 +1,4 @@
-# FableHub 0.18.0
+# FableHub 0.18.1
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -87,7 +87,7 @@ Guild roster and profession tracker for WoW: Forever.
   Skill levels share automatically.
 
 ## Commands
-`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test whether FableHub's whispers reach someone · `/fhub reset` clear stored guild data · `/fhub debug`
+`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test which spelling of a name FableHub can whisper (works even if they don't have FableHub) · `/fhub reset` clear stored guild data · `/fhub debug`
 
 When guildmates run a newer FableHub, you'll get a chat message and the sidebar shows **update** next to the version.
 

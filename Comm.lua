@@ -73,7 +73,9 @@ local function Pump()
   lastRegen = now
   while tokens >= 1 and #sendQueue > 0 do
     local item = sendQueue[1]
-    local result = SendRaw(item.msg, item.target, item.prefix)
+    local to = item.form or (item.target and ns.WhisperTarget(item.target))
+    if to then ns.NoteWhisper(to, item.target) end
+    local result = SendRaw(item.msg, to, item.prefix)
     if result == "retry" then
       item.tries = (item.tries or 0) + 1
       if item.tries > 10 then table.remove(sendQueue, 1) end
@@ -90,13 +92,14 @@ local function NewId()
   return Enc.ToB36(nextId)
 end
 
-local function Queue(msgType, payload, target, prefix)
+local function Queue(msgType, payload, target, prefix, form)
   payload = payload or ""
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
   for i = 1, total do
     local part = payload:sub((i - 1) * CHUNK + 1, i * CHUNK)
-    table.insert(sendQueue, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target, prefix = prefix })
+    table.insert(sendQueue, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target, prefix = prefix,
+                              form = form })
   end
 end
 
@@ -106,6 +109,108 @@ function ns.Send(msgType, payload) Queue(msgType, payload, nil) end
 -- to one member only (addon whisper): for data not everyone may see
 function ns.SendTo(target, msgType, payload)
   if target and target ~= ns.MyKey() then Queue(msgType, payload, target) end
+end
+
+-- to one member using a given spelling of their name (for /fhub ping)
+function ns.SendToForm(target, form, msgType, payload)
+  if target and form and target ~= ns.MyKey() then Queue(msgType, payload, target, nil, form) end
+end
+
+------------------------------------------------------------------------
+-- Whisper names. Forever's guild roster spells names with last names, and the
+-- name the game accepts for a whisper may be spelled differently. Candidates
+-- are tried in order: one that gets "No player named ..." is skipped from then
+-- on (and that error line is hidden), and one known to work is remembered in
+-- saved data (g.whisperNames).
+------------------------------------------------------------------------
+local badForm = {}       -- [key] = { [form] = true } (this session)
+local recentWhisper = {} -- [form] = { key = key, t = GetTime() }
+
+function ns.WhisperCandidates(key)
+  local list, seen = {}, {}
+  local function add(n)
+    if n and n ~= "" and not seen[n] then seen[n] = true; list[#list + 1] = n end
+  end
+  local g = ns.GuildDB and ns.GuildDB()
+  add(g and g.whisperNames and g.whisperNames[key])
+  -- what Blizzard's own guild window uses: no realm for people on our realm
+  -- (in the Forever beta, "Name Lastname-Realm" is refused but "Name Lastname" works)
+  if Ambiguate then add(Ambiguate(key, "none")) end
+  add(key)
+  local realm = key:match("%-(.+)$")
+  local short = ns.ShortName(key)
+  local r = ns.roster[key]
+  if r and r.guid and GetPlayerInfoByGUID then
+    -- the game's own name for the character (may differ from the roster's)
+    local ok, _, _, _, _, _, gname, grealm = pcall(GetPlayerInfoByGUID, r.guid)
+    if ok and type(gname) == "string" and gname ~= "" then
+      if type(grealm) == "string" and grealm ~= "" then add(gname .. "-" .. grealm:gsub("[%s%-]", "")) end
+      add(gname .. (realm and ("-" .. realm) or ""))
+      add(gname)
+    end
+  end
+  add(short)
+  local first = short:match("^(%S+)%s")
+  if first then
+    add(first .. (realm and ("-" .. realm) or ""))
+    add(first)
+  end
+  return list
+end
+
+function ns.WhisperTarget(key)
+  local bad = badForm[key] or {}
+  for _, form in ipairs(ns.WhisperCandidates(key)) do
+    if not bad[form] then return form end
+  end
+  return key
+end
+
+-- a spelling that reached them: use it from now on
+function ns.WhisperWorked(key, form)
+  local g = ns.GuildDB and ns.GuildDB()
+  if not g or not key or not form then return end
+  g.whisperNames = g.whisperNames or {}
+  g.whisperNames[key] = (form ~= key) and form or nil
+  if badForm[key] then badForm[key][form] = nil end
+end
+
+function ns.NoteWhisper(form, key)
+  recentWhisper[form] = { key = key, t = GetTime() }
+end
+
+-- "No player named '%s' is currently playing." as a pattern (any language)
+local notFoundPattern
+local function NotFoundName(msg)
+  if type(msg) ~= "string" then return nil end
+  if not notFoundPattern then
+    local fmt = ERR_CHAT_PLAYER_NOT_FOUND_S or "No player named '%s' is currently playing."
+    notFoundPattern = "^" .. fmt:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)") .. "$"
+  end
+  return msg:match(notFoundPattern)
+end
+local function OurFailedWhisper(msg)
+  local name = NotFoundName(msg)
+  local w = name and recentWhisper[name]
+  if w and GetTime() - w.t < 5 then return name, w end
+end
+
+ns.RegisterEvent("CHAT_MSG_SYSTEM", function(msg)
+  local form, w = OurFailedWhisper(msg)
+  if not form or not w.key then return end
+  badForm[w.key] = badForm[w.key] or {}
+  badForm[w.key][form] = true
+  local g = ns.GuildDB and ns.GuildDB()
+  if g and g.whisperNames and g.whisperNames[w.key] == form then g.whisperNames[w.key] = nil end
+  ns.Debug(("whisper name \"%s\" not found; next time: \"%s\""):format(form, ns.WhisperTarget(w.key)))
+  ns.Fire("WHISPER_FAILED", w.key, form)
+end)
+
+-- hide those error lines for FableHub's own (invisible) addon whispers
+if ChatFrame_AddMessageEventFilter then
+  ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function(_, _, msg)
+    if OurFailedWhisper(msg) then return true end
+  end)
 end
 
 function ns.QueueLength() return #sendQueue end

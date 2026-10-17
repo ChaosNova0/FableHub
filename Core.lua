@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.18.0"
+ns.VERSION = "0.18.1"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves
@@ -274,6 +274,7 @@ local function RebuildRoster()
       roster[key] = {
         key = key, rank = rankName, rankIndex = rankIndex, level = level,
         class = classFile, online = online and true or false, zone = zone, note = note, lastSeen = lastSeen,
+        guid = guid,
       }
       order[#order + 1] = key
     end

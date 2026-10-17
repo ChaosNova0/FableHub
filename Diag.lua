@@ -49,39 +49,71 @@ function D.Ping(name)
   local key = FindMember(name)
   if not key then return ns.Print("No guild member called \"" .. tostring(name) .. "\".") end
   if key == ns.MyKey() then return ns.Print("Ping someone else: you can't whisper yourself.") end
-  local forms = { key }
-  -- Forever last names: also try "First-Realm", in case whispers need that spelling
-  local short, realm = ns.ShortName(key), key:match("%-(.+)$")
-  local firstOnly = short:match("^(%S+)%s")
-  if firstOnly then forms[2] = firstOnly .. (realm and ("-" .. realm) or "") end
+  -- every spelling FableHub might use for a whisper; the game says "No player
+  -- named ..." for the ones it doesn't know (hidden from chat, noted here)
+  local forms = ns.WhisperCandidates(key)
   D.lastPing = { target = key, online = ns.IsOnline(key), results = {} }
   for i, form in ipairs(forms) do
     local id = Enc.ToB36(math.random(0, 46655)) .. i
     pings[id] = { key = key, form = form, sent = GetTime() }
     D.lastPing.results[i] = { form = form, id = id }
-    ns.SendTo(form, "e", id)
+    ns.SendToForm(key, form, "e", id)
   end
-  ns.Print(("Pinging %s%s..."):format(ns.ShortName(key), ns.IsOnline(key) and "" or " (shows as offline)"))
-  C_Timer.After(8, function()
+  ns.Print(("Pinging %s with %d spelling%s of the name%s..."):format(ns.ShortName(key), #forms, #forms == 1 and "" or "s",
+    ns.IsOnline(key) and "" or " (they show as offline)"))
+  -- messages go out about one a second: wait for ours to leave the queue, then 8s
+  local wait = 8 + (ns.QueueLength and ns.QueueLength() or 0)
+  if wait > 10 then ns.Print(("  (results in about %d seconds: other FableHub messages are queued first)"):format(wait)) end
+  C_Timer.After(wait, function()
+    local worked
     for _, r in ipairs(D.lastPing and D.lastPing.results or {}) do
       local p = pings[r.id]
       r.seconds = p and p.got and (p.got - p.sent) or nil
-      ns.Print(("  whisper to \"%s\": %s"):format(r.form,
-        r.seconds and ("answered in %.1fs"):format(r.seconds) or "no answer"))
+      r.notFound = p and p.notFound or nil
+      if r.seconds and not worked then worked = r.form end
+    end
+    -- no FableHub answer: a spelling the game didn't refuse still reached them
+    if not worked and D.lastPing.online then
+      for _, r in ipairs(D.lastPing.results) do
+        if not r.notFound then worked = r.form; r.reached = true; break end
+      end
+    end
+    for _, r in ipairs(D.lastPing.results) do
+      ns.Print(("  \"%s\": %s"):format(r.form, D.Describe(r)))
+    end
+    if worked then
+      ns.WhisperWorked(key, worked)
+      ns.Print(("  FableHub will whisper them as \"%s\"."):format(worked))
     end
     if not ns.present[key] then
-      ns.Print("  (they haven't been seen with FableHub this session; they need 0.18 or later to answer)")
+      ns.Print("  (they haven't been seen with FableHub this session, so they can't answer; the game still says whether a spelling exists)")
     end
   end)
 end
+
+function D.Describe(r)
+  if r.seconds then return ("FableHub answered in %.1fs"):format(r.seconds) end
+  if r.notFound then return "no such player (the game refused this spelling)" end
+  if r.reached then return "reached them (no FableHub answer)" end
+  return "no answer"
+end
+
+ns.On("WHISPER_FAILED", function(key, form)
+  for _, p in pairs(pings) do
+    if p.key == key and p.form == form then p.notFound = true end
+  end
+end)
 
 -- someone pinged us: answer on the guild channel
 ns.CommHandlers.e = function(sender, payload)
   local id = (payload or ""):match("^(%w+)$")
   if not id then return end
+  -- one ping tries several spellings at once: answer up to 10 per 10 seconds per person
   local now = GetTime()
-  if answered[sender] and now - answered[sender] < 1 then return end
-  answered[sender] = now
+  local a = answered[sender]
+  if not a or now - a.t > 10 then a = { t = now, n = 0 }; answered[sender] = a end
+  if a.n >= 10 then return end
+  a.n = a.n + 1
   ns.Send("f", id)
 end
 ns.CommHandlers.f = function(sender, payload)
@@ -168,12 +200,14 @@ function D.Report()
     add("%s  ->  %s", raw, key and key or "NOT MATCHED to the guild roster")
   end
   if not any then add("All senders matched the roster exactly.") end
+  local gw = ns.GuildDB and ns.GuildDB()
+  for key, form in pairs(gw and gw.whisperNames or {}) do add("whispers to %s go to \"%s\"", key, form) end
   add("")
 
   if D.lastPing then
     add("[Last ping: %s, %s]", D.lastPing.target, D.lastPing.online and "online" or "offline")
     for _, r in ipairs(D.lastPing.results) do
-      add("whisper to \"%s\": %s", r.form, r.seconds and ("answered in %.1fs"):format(r.seconds) or "no answer")
+      add("\"%s\": %s", r.form, D.Describe(r))
     end
     add("")
   end
