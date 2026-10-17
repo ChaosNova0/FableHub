@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.17.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange)
+![Version](https://img.shields.io/badge/version-0.17.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -150,4 +150,4 @@ Put everything except `tests/`, `.gitignore` and the `.git` folder into a folder
 - **Questrial** by Joe Prince and Laura Meseguer, © 2011 The Questrial Project Authors, SIL Open Font License 1.1 (`Media/Fonts/Questrial-OFL.txt`). Included unmodified.
 - That's My BIS and Raid-Helper are separate services. FableHub only reads the export text they produce.
 
-FableHub's own code: *licence not chosen yet.*
+FableHub's own code is released under the [MIT License](LICENSE). The bundled libraries and font keep their own licences, listed above.
