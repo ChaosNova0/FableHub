@@ -96,6 +96,7 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   L:Toggle("Show the minimap button", function() return not (FableHubDB.settings.minimap and FableHubDB.settings.minimap.hide) end,
     function() if ns.ToggleMinimapButton then ns.ToggleMinimapButton() end end)
   L:Option("Open on Home each session", "homeFirst", "Otherwise FableHub reopens on the page you last used.")
+  L:Option("Getting started tips on Home", "homeTips", "A card on Home listing setup still to do, such as professions whose recipes haven't been shared yet.")
 
   -- window opacity: - / +
   local opLabel = T.Text(L.frame, 12, 0.8)

@@ -92,6 +92,37 @@ end
 
 local function Go(id) if ns.UI.ShowPanel then ns.UI.ShowPanel(id) end end
 
+-- Setup still to do, as short tips. Each disappears once it's done.
+local NO_RECIPES = { [356] = true, [794] = true } -- Fishing, Archaeology
+function ns.HomeTips()
+  local tips = {}
+  local rec = ns.MyRecord and ns.MyRecord()
+  local missing = {}
+  for skillLine, p in pairs(rec and rec.profs or {}) do
+    if ns.ProfCategory(skillLine) ~= "gather" and not NO_RECIPES[skillLine] and not next(p.recipes or {}) then
+      missing[#missing + 1] = p.name or "?"
+    end
+  end
+  table.sort(missing)
+  if #missing > 0 then
+    tips[#tips + 1] = ("Open your %s window once so the guild can see your recipes."):format(
+      (table.concat(missing, ", "):gsub(", ([^,]+)$", " and %1")))
+  end
+  local g = ns.GuildDB and ns.GuildDB()
+  if g and P.IsGuildMaster() then
+    if not g.officerRankTs then
+      tips[#tips + 1] = "Choose which ranks are officers: the cog (top right) > Officer ranks."
+    end
+    if not (g.bank and g.bank.perm) then
+      tips[#tips + 1] = "Open the guild bank once, so FableHub learns which ranks may see each tab."
+    end
+  end
+  if g and P.CanEdit() and not g.tmb then
+    tips[#tips + 1] = "Officers: import your That's My BIS priorities under Loot > Priorities."
+  end
+  return tips
+end
+
 ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(panel)
   local function Toggle() panel:Refresh() end
   local motd = Card(panel, "motd", "MESSAGE OF THE DAY", Toggle)
@@ -102,9 +133,19 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
   local reqs = Card(panel, "reqs", "CRAFT REQUESTS", Toggle)
   local online = Card(panel, "online", "ONLINE NOW", Toggle)
   local bankReqs = Card(panel, "bankreqs", "BANK REQUESTS", Toggle) -- officers only
+  local tips = Card(panel, "tips", "GETTING STARTED", Toggle)        -- while there's setup left
   for _, c in ipairs({ news, activity, loot, reqs, online, bankReqs }) do c.flexible = true end
   local leftCards, rightCards = { motd, news, activity, loot }, { raids, reqs, online }
+  local allLeft = { tips, motd, news, activity, loot }
   local allRight = { raids, reqs, bankReqs, online }
+
+  -- Getting started
+  local tipsText = T.Text(tips.body, 12, 0.85)
+  tipsText:SetPoint("TOPLEFT")
+  tipsText:SetPoint("RIGHT", tips.body, "RIGHT")
+  tipsText:SetJustifyH("LEFT"); tipsText:SetJustifyV("TOP")
+  tipsText:SetSpacing(3)
+  Link(tips, "Hide", function() ns.SetOption("homeTips", false); panel:Refresh() end)
 
   -- Message of the Day
   local motdText = T.Text(motd.body, 12, 0.85)
@@ -203,7 +244,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
   local function Widths()
     local w = panel:GetWidth() or 680
     local lw = math.floor((w - 10) * 0.56)
-    for _, c in ipairs(leftCards) do c:SetWidth(lw) end
+    for _, c in ipairs(allLeft) do c:SetWidth(lw) end
     for _, c in ipairs(allRight) do c:SetWidth(w - 10 - lw) end
   end
   local function Layout()
@@ -228,6 +269,19 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     local canEdit = P.CanEdit()
     local now = ns.Now()
     local ar, ag, ab = T.Accent()
+
+    -- Getting started (only while there's something to do)
+    local tipList = ns.Option("homeTips") and ns.HomeTips() or {}
+    if #tipList > 0 then
+      for i, t in ipairs(tipList) do tipList[i] = UI.Colorize("- ", ar, ag, ab) .. t end
+      tipsText:SetText(table.concat(tipList, "\n"))
+      tips.want = HEAD + (tipsText:GetStringHeight() or 14) + PAD + 2
+      leftCards = { tips, motd, news, activity, loot }
+      tips:Show()
+    else
+      leftCards = { motd, news, activity, loot }
+      tips:Hide()
+    end
 
     -- MOTD
     local m = GetGuildRosterMOTD and GetGuildRosterMOTD() or ""

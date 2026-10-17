@@ -2,8 +2,14 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.17.1"
+ns.VERSION = "0.18.0"
 ns.PROTOCOL = 1
+-- Data era. Bump this (1 -> 2) in the build released for the live launch:
+-- everyone's saved guild data from the beta is cleared once, and FableHub moves
+-- to a new message channel so clients still on older versions can't send
+-- beta data into the new guild. Settings are kept.
+ns.DATA_EPOCH = 1
+if FABLEHUB_TEST_EPOCH then ns.DATA_EPOCH = FABLEHUB_TEST_EPOCH end -- test suite only
 
 FableHub = ns -- global handle, handy for /dump FableHub while testing
 
@@ -14,11 +20,23 @@ FableHub = ns -- global handle, handy for /dump FableHub while testing
 -- but each distinct error is passed once to the game's error handler, so it
 -- shows up in BugSack / "Display Lua errors" and can be reported.
 local reported = {}
+-- the last errors are kept in saved data for /fhub bug
+local function LogError(err)
+  if not FableHubDB then return end
+  FableHubDB.errors = FableHubDB.errors or {}
+  local list = FableHubDB.errors
+  for _, e in ipairs(list) do
+    if e.msg == err then e.n = (e.n or 1) + 1; e.t = time(); e.v = ns.VERSION; return end
+  end
+  table.insert(list, { msg = err:sub(1, 400), t = time(), n = 1, v = ns.VERSION })
+  while #list > 20 do table.remove(list, 1) end
+end
 function ns.ReportError(err)
   err = tostring(err)
   ns.Debug("error: " .. err)
   if reported[err] then return end
   reported[err] = true
+  pcall(LogError, err)
   local handler = geterrorhandler and geterrorhandler()
   if handler then pcall(handler, "FableHub " .. (ns.VERSION or "") .. ": " .. err) end
 end
@@ -150,6 +168,8 @@ end
 ------------------------------------------------------------------------
 local DB_VERSION = 1
 
+local STALE_GUILD = 90 * 86400 -- forget a guild's data after 90 days without visiting it
+
 local function InitDB()
   FableHubDB = FableHubDB or {}
   local db = FableHubDB
@@ -157,6 +177,18 @@ local function InitDB()
   db.guilds = db.guilds or {}
   db.settings = db.settings or {}
   db.chars = db.chars or {} -- your own characters' records, kept even if you change guild
+  -- fresh start for a new data era (see ns.DATA_EPOCH): settings stay
+  if (db.epoch or 1) < ns.DATA_EPOCH then
+    ns.freshStart = next(db.guilds) ~= nil or next(db.chars) ~= nil
+    db.guilds, db.chars, db.errors = {}, {}, nil
+  end
+  db.epoch = ns.DATA_EPOCH
+  -- tidy guilds not visited for a long time (e.g. old characters, beta guilds)
+  local now = time()
+  for gk, g in pairs(db.guilds) do
+    if not g.lastSeen then g.lastSeen = now
+    elseif now - g.lastSeen > STALE_GUILD then db.guilds[gk] = nil end
+  end
 end
 
 function ns.GuildKey()
@@ -176,6 +208,7 @@ function ns.GuildDB()
     g = { members = {}, addonUsers = {} }
     FableHubDB.guilds[gk] = g
   end
+  g.lastSeen = time()
   return g
 end
 
@@ -270,6 +303,7 @@ ns.OPTION_DEFAULTS = {
   readyCheckAuto = true,     -- run the ready check page's check on every ready check
   lootAnnounce = true,       -- officers: announce awarded loot in raid chat
   alertBankRequest = true,   -- officers: chat message when someone requests a guild bank item
+  homeTips = true,           -- "Getting started" card on Home while there's setup left to do
 }
 function ns.Option(key)
   local s = FableHubDB and FableHubDB.settings
@@ -339,6 +373,12 @@ ns.RegisterEvent("PLAYER_GUILD_UPDATE", function()
 end)
 
 ns.RegisterEvent("PLAYER_LOGIN", function()
+  if ns.freshStart then
+    ns.freshStart = nil
+    C_Timer.After(8, function()
+      ns.Print("Fresh start: guild data saved before this version was cleared. It refills as guildmates log in.")
+    end)
+  end
   ns.RequestRoster()
   -- refresh the roster every 60s so online status stays current
   C_Timer.NewTicker(60, function() if IsInGuild() then ns.RequestRoster() end end)
@@ -350,8 +390,11 @@ end)
 ------------------------------------------------------------------------
 SLASH_FABLEHUB1 = "/fhub"
 SLASH_FABLEHUB2 = "/fablehub"
+ns.SlashHandlers = {} -- extra /fhub commands from other files: [word] = function(rest)
 SlashCmdList.FABLEHUB = function(msg)
   msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  local word, rest = msg:match("^(%S+)%s*(.*)$")
+  if word and ns.SlashHandlers[word] then return ns.SlashHandlers[word](rest or "") end
   if msg == "" or msg == "show" then
     if ns.ToggleUI then ns.ToggleUI() end
   elseif msg == "sync" then
@@ -391,6 +434,6 @@ SlashCmdList.FABLEHUB = function(msg)
     ns.Fire("DATA_CHANGED")
     ns.Print("Cleared stored guild data. It will refill as guildmates log in.")
   else
-    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub status | /fhub reset | /fhub debug")
+    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub status | /fhub bug - report to copy | /fhub ping Name - test whispers | /fhub reset | /fhub debug")
   end
 end

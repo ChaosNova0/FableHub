@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.17.1-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.18.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -51,6 +51,8 @@ FableHub is useful once a few guild members have it, and more useful once an off
 | `/fhub minimap` | Show or hide the minimap button |
 | `/fhub opacity 50-100` | Window opacity (default 85) |
 | `/fhub resetwindow` | Put the window back in the middle at its default size |
+| `/fhub bug` | Open a report (version, client build, name matching, recent errors) to copy into Discord |
+| `/fhub ping Name` | Test whether FableHub's whispers reach a guildmate |
 | `/fhub reset` | Clear stored guild data |
 | `/fhub debug` | Toggle debug messages |
 
@@ -122,6 +124,17 @@ Warnings about WoW API globals are expected (luacheck doesn't know the game's AP
 ### Building a release
 
 Put everything except `tests/`, `.gitignore` and the `.git` folder into a folder called `FableHub`, and zip that folder as `FableHub-<version>.zip`. Bump the version in both `FableHub.toc` (`## Version`) and `Core.lua` (`ns.VERSION`).
+
+When a guildmate (an officer, or at least two members) runs a newer version, everyone on an older one gets a chat message and a note in the sidebar.
+
+### Fresh start for the live launch
+
+`ns.DATA_EPOCH` in `Core.lua` is the data era. In the build released for launch, change it from `1` to `2`:
+
+- each player's saved guild data and character records from the beta are cleared once (settings are kept), with a chat message saying so;
+- FableHub moves to a new addon-message channel (`FableHub2`), so anyone still on an older version can't send beta data into the new guild. Their hellos are still heard, so they're counted as FableHub users and told to update.
+
+Guild data for a guild not visited for 90 days is removed automatically.
 
 ### Notes for contributors
 

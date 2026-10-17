@@ -1027,7 +1027,8 @@ function UI.RefreshChrome()
   main.sideStatus:SetText(("%s %d of %d online\n%s %d use FableHub (%d online)\n%s"):format(
     ns.Icons.Dot(true, 7), membersOnline, members,
     ns.Icons.Dot(false, 7), users, online,
-    UI.Dim("v" .. ns.VERSION, 0.3)))
+    ns.updateAvailable and UI.Colorize(("v%s  ·  update: %s"):format(ns.VERSION, ns.updateAvailable), T.Accent())
+      or UI.Dim("v" .. ns.VERSION, 0.3)))
 end
 
 local refreshPending = false
@@ -1044,6 +1045,7 @@ end
 UI.QueueRefresh = QueueRefresh
 ns.On("DATA_CHANGED", QueueRefresh)
 ns.On("ROSTER_CHANGED", QueueRefresh)
+ns.On("UPDATE_AVAILABLE", QueueRefresh)
 
 function ns.ToggleUI()
   if not main then Build() end

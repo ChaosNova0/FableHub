@@ -16,7 +16,13 @@
 local _, ns = ...
 local Enc = ns.Encode
 
-local PREFIX = "FableHub"
+-- The channel name follows ns.DATA_EPOCH (Core.lua). Bumping the epoch for the
+-- launch build gives a fresh start: older clients talk on the old channel, so
+-- their (beta) data can't reach the new one. Hellos still go out on the old
+-- channel too, so older clients see that a newer FableHub exists.
+local LEGACY_PREFIX = "FableHub"
+local PREFIX = (ns.DATA_EPOCH or 1) > 1 and ("FableHub" .. ns.DATA_EPOCH) or LEGACY_PREFIX
+ns.PREFIX = PREFIX
 local MAX_MSG = 250
 local HEADER_ROOM = 16
 local CHUNK = MAX_MSG - HEADER_ROOM
@@ -39,12 +45,12 @@ local function Paused()
   return false
 end
 
-local function SendRaw(msg, target)
+local function SendRaw(msg, target, prefix)
   local ok, res
   if target then
-    ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "WHISPER", target)
+    ok, res = pcall(C_ChatInfo.SendAddonMessage, prefix or PREFIX, msg, "WHISPER", target)
   else
-    ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
+    ok, res = pcall(C_ChatInfo.SendAddonMessage, prefix or PREFIX, msg, "GUILD")
   end
   if not ok then
     ns.Debug("send error: " .. tostring(res))
@@ -67,7 +73,7 @@ local function Pump()
   lastRegen = now
   while tokens >= 1 and #sendQueue > 0 do
     local item = sendQueue[1]
-    local result = SendRaw(item.msg, item.target)
+    local result = SendRaw(item.msg, item.target, item.prefix)
     if result == "retry" then
       item.tries = (item.tries or 0) + 1
       if item.tries > 10 then table.remove(sendQueue, 1) end
@@ -84,13 +90,13 @@ local function NewId()
   return Enc.ToB36(nextId)
 end
 
-local function Queue(msgType, payload, target)
+local function Queue(msgType, payload, target, prefix)
   payload = payload or ""
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
   for i = 1, total do
     local part = payload:sub((i - 1) * CHUNK + 1, i * CHUNK)
-    table.insert(sendQueue, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target })
+    table.insert(sendQueue, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target, prefix = prefix })
   end
 end
 
@@ -107,7 +113,14 @@ function ns.QueueLength() return #sendQueue end
 ------------------------------------------------------------------------
 -- Higher level messages
 ------------------------------------------------------------------------
-local function HelloPayload()
+local HelloPayload
+-- after a fresh start (new channel), also say hello on the old channel so
+-- members still on an older FableHub are told to update
+local function LegacyHello()
+  if PREFIX ~= LEGACY_PREFIX then Queue("H", HelloPayload(), nil, LEGACY_PREFIX) end
+end
+
+function HelloPayload()
   local rec = ns.MyRecord()
   return table.concat({ ns.PROTOCOL, ns.VERSION, Enc.ToB36(rec and rec.ts or 0), ns.MyKey() or "" }, "^")
 end
@@ -246,6 +259,33 @@ local wantedRecently = {}   -- [key] = GetTime() when we decided to ask for it
 local wantSeen = {}         -- [key] = GetTime() when someone else asked for it
 local answeredWant = 0
 
+-- Newer FableHub versions seen in the guild. Told once per version, and only
+-- when an officer or at least two members run it (so one player claiming a
+-- made-up version can't nag everyone).
+local newerSeen, toldNewer = {}, {}
+local function NoteVersion(key, ver)
+  if not key or not ver or not ver:match("^%d+%.%d+") then return end
+  if VersionNumber(ver) <= VersionNumber(ns.VERSION) then return end
+  newerSeen[ver] = newerSeen[ver] or {}
+  newerSeen[ver][key] = true
+  local n, officer = 0, false
+  for k in pairs(newerSeen[ver]) do
+    n = n + 1
+    if ns.RealOfficer(k) then officer = true end
+  end
+  if not officer and n < 2 then return end
+  if not ns.updateAvailable or VersionNumber(ver) > VersionNumber(ns.updateAvailable) then
+    ns.updateAvailable = ver
+    ns.Fire("UPDATE_AVAILABLE", ver)
+  end
+  if not toldNewer[ver] then
+    toldNewer[ver] = true
+    ns.Print(("A newer FableHub is out: %s (you have %s). Ask your officers or the guild Discord for the update.")
+      :format(ver, ns.VERSION))
+  end
+end
+ns.NoteVersion = NoteVersion
+
 local function HandleHello(sender, payload, isReply)
   local f = Enc.Split(payload, "^")
   local proto = tonumber(f[1]) or 0
@@ -253,6 +293,7 @@ local function HandleHello(sender, payload, isReply)
   -- only when we couldn't match them to the roster ourselves
   if f[4] and f[4] ~= "" and not ns.roster[sender] then sender = f[4] end
   ns.present[sender] = f[2] or "?"
+  NoteVersion(sender, f[2])
   local g = ns.GuildDB()
   if g then
     g.addonUsers[sender] = { version = f[2], seen = ns.Now() }
@@ -331,13 +372,26 @@ local function Dispatch(sender, msgType, payload)
 end
 
 function ns.OnAddonMessage(prefix, text, channel, sender)
-  if prefix ~= PREFIX or (channel ~= "GUILD" and channel ~= "WHISPER") then return end
+  if channel ~= "GUILD" and channel ~= "WHISPER" then return end
+  local legacy = PREFIX ~= LEGACY_PREFIX and prefix == LEGACY_PREFIX
+  if prefix ~= PREFIX and not legacy then return end
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then return end
   sender = ns.NormalizeName(sender)
   if not sender then return end
   -- whispers can come from anyone on the realm: only guild members count.
   -- (GUILD messages can only come from the guild.)
   local who = ns.ResolveSender(sender)
+  if ns.Diag then ns.Diag.NoteSender(sender, who) end
+  if legacy then
+    -- older clients on the old channel: only note their version, use nothing else
+    local t, payload = text:match("^([HR])#%w+#1#1#(.*)$")
+    if t and channel == "GUILD" then
+      local f = Enc.Split(payload, "^")
+      local key = who or (f[4] ~= "" and f[4]) or sender
+      if key ~= ns.MyKey() then ns.present[key] = ns.present[key] or f[2] end
+    end
+    return
+  end
   if channel == "WHISPER" and not who then return end
   sender = who or sender
   if sender == ns.MyKey() then return end
@@ -387,6 +441,7 @@ local function Start()
   ns.ScanAll()
   ns.MirrorMyRecord()
   ns.Send("H", HelloPayload())
+  LegacyHello()
   SendAllDigests()
 end
 
@@ -394,6 +449,7 @@ function ns.ForceSync()
   if not IsInGuild() then return ns.Print("You're not in a guild.") end
   if not started then Start() return end
   ns.Send("H", HelloPayload())
+  LegacyHello()
   ns.BroadcastRecord(ns.MyRecord())
   SendAllDigests()
   ns.Print("Sync requested.")
@@ -432,6 +488,7 @@ end
 
 ns.On("LOGIN", function()
   C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
+  if PREFIX ~= LEGACY_PREFIX then C_ChatInfo.RegisterAddonMessagePrefix(LEGACY_PREFIX) end
   C_Timer.NewTicker(0.25, Pump)
   -- drop half-received messages after a minute
   C_Timer.NewTicker(30, function()

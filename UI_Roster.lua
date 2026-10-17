@@ -100,8 +100,11 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
       tt:AddLine(("Attended %d of the last %d raid nights (30 days)"):format(item.attended, item.attTotal), 0.8, 0.8, 0.8)
     end
     tt:AddLine(" ")
+    -- their FableHub version: this session, else the last one we saw
+    local g = ns.GuildDB()
+    local ver = ns.present[m.key] or (g and g.addonUsers[m.key] and g.addonUsers[m.key].version)
     if rec and rec.ts and rec.ts > 0 then
-      tt:AddLine("Uses FableHub, updated " .. UI.TimeAgo(rec.ts), 0.6, 0.6, 0.6)
+      tt:AddLine("Uses FableHub" .. (ver and (" " .. ver) or "") .. ", updated " .. UI.TimeAgo(rec.ts), 0.6, 0.6, 0.6)
     else
       tt:AddLine("Not using FableHub yet", 0.6, 0.6, 0.6)
     end

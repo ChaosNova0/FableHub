@@ -1,4 +1,4 @@
-# FableHub 0.17.1
+# FableHub 0.18.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -15,6 +15,7 @@ Guild roster and profession tracker for WoW: Forever.
   - Message of the Day, Announcements, Recent loot, Bank requests (officers only), Upcoming raids (with Accept / Late / Tentative / Decline for the next raid night), Crafting requests (ones you can craft and your own) and who's online.
   - **Guild activity**: level milestones (10/20/30/40/50/60), profession milestones (150/225/300), new recipes for rare or better items, members joining or leaving, raid nights scheduled and crafting requests completed. Kept for 30 days; only changes after installing are shown.
   - Cards shrink to fit what's in them; click a card's title to collapse or expand it (remembered).
+  - **Getting started** appears at the top while there's setup left: professions whose recipes FableHub hasn't read yet, and for the Guild Master, choosing officer ranks and opening the guild bank once. Each tip goes away when it's done; **Hide** (or Settings) turns the card off.
   - Officers post announcements with **+ Post**. They disappear after 14 days unless pinned; right-click one to pin, unpin or delete it.
 - **Roster** (sidebar section with Members and Alts):
   - **Members**: every guild member with level, rank, zone, note and last seen. Hover for details, right-click to whisper.
@@ -86,7 +87,9 @@ Guild roster and profession tracker for WoW: Forever.
   Skill levels share automatically.
 
 ## Commands
-`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub reset` clear stored guild data · `/fhub debug`
+`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test whether FableHub's whispers reach someone · `/fhub reset` clear stored guild data · `/fhub debug`
+
+When guildmates run a newer FableHub, you'll get a chat message and the sidebar shows **update** next to the version.
 
 ## Credits
 Bundles LibDeflate (zlib licence) and rxi/json.lua (MIT) to read That's My BIS exports; licences are in the Libs folder. The font is Questrial (SIL Open Font License; licence in Media/Fonts).
