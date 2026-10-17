@@ -16,12 +16,13 @@
 local _, ns = ...
 local Enc = ns.Encode
 
--- The channel name follows ns.DATA_EPOCH (Core.lua). Bumping the epoch for the
--- launch build gives a fresh start: older clients talk on the old channel, so
--- their (beta) data can't reach the new one. Hellos still go out on the old
--- channel too, so older clients see that a newer FableHub exists.
-local LEGACY_PREFIX = "FableHub"
-local PREFIX = (ns.DATA_EPOCH or 1) > 1 and ("FableHub" .. ns.DATA_EPOCH) or LEGACY_PREFIX
+-- The channel name follows ns.DATA_EPOCH (Core.lua). Bumping the epoch gives a
+-- fresh start (the launch build is era 2): older clients talk on the previous
+-- era's channel, so their (beta) data can't reach the new one. Hellos still go
+-- out on that channel too, so older clients see that a newer FableHub exists.
+local function PrefixFor(epoch) return epoch > 1 and ("FableHub" .. epoch) or "FableHub" end
+local PREFIX = PrefixFor(ns.DATA_EPOCH or 1)
+local LEGACY_PREFIX = PrefixFor(math.max(1, (ns.DATA_EPOCH or 1) - 1))
 ns.PREFIX = PREFIX
 local MAX_MSG = 250
 local HEADER_ROOM = 16

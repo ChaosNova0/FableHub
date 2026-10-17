@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.18.4-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.19.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -69,6 +69,7 @@ FableHub is useful once a few guild members have it, and more useful once an off
 - **Other safeguards:** addon whispers from outside the guild are ignored, WoW formatting codes are stripped from everything received, changes dated more than five minutes in the future are refused, and each member can have at most 10 open craft requests and 10 open bank requests.
 - **Guild bank** contents are read when a member opens the bank in game. Tabs every rank may view go to the whole guild. Restricted tabs are whispered only to members whose rank may view them, using the permissions the Guild Master's FableHub reads from the game.
 - Messages are split into parts, throttled and paused during combat and boss encounters.
+- **Connected realms:** Forever drops guild addon messages sent from a character on a connected realm (not the guild's home realm). FableHub notices when its own guild messages don't come back and switches to whispering FableHub users instead. Characters are always stored under the guild's home realm, so every client agrees on names.
 - Nothing leaves the game. Addons have no internet access; the Raid-Helper and That's My BIS imports work by pasting their export text.
 
 ---
@@ -111,7 +112,7 @@ pip install lupa            # Lua 5.1 runtime for Python
 python3 tests/run.py        # run from the repository root
 ```
 
-Expected output ends with something like `366 passed, 0 failed`.
+Expected output ends with something like `419 passed, 0 failed`.
 
 ### Static checks
 
@@ -127,12 +128,12 @@ Put everything except `tests/`, `.gitignore` and the `.git` folder into a folder
 
 When a guildmate (an officer, or at least two members) runs a newer version, everyone on an older one gets a chat message and a note in the sidebar.
 
-### Fresh start for the live launch
+### Data eras (fresh starts)
 
-`ns.DATA_EPOCH` in `Core.lua` is the data era. In the build released for launch, change it from `1` to `2`:
+`ns.DATA_EPOCH` in `Core.lua` is the data era: `1` was the Forever beta, `2` is live (from 0.19.0). Raising it:
 
-- each player's saved guild data and character records from the beta are cleared once (settings are kept), with a chat message saying so;
-- FableHub moves to a new addon-message channel (`FableHub2`), so anyone still on an older version can't send beta data into the new guild. Their hellos are still heard, so they're counted as FableHub users and told to update.
+- clears each player's saved guild data and character records once (settings are kept), with a chat message saying so;
+- moves FableHub to a new addon-message channel (`FableHub2` for era 2, `FableHub3` for era 3...), so anyone still on an older version can't send old data in. Hellos still go out and are heard on the previous era's channel, so older clients are counted as FableHub users and told to update.
 
 Guild data for a guild not visited for 90 days is removed automatically.
 
@@ -148,8 +149,8 @@ Guild data for a guild not visited for 90 days is removed automatically.
 
 ## Known limitations
 
-- `## Interface: 16001` in the TOC is a best guess for Forever's client build. If the game reports the addon as out of date, check the real value with `/dump select(4, GetBuildInfo())`.
-- Whispered addon messages to characters whose Forever names include a surname (a space in the name) haven't been tested in game yet.
+- `## Interface: 16001` matched the Forever beta client (1.60.1). If the live client reports the addon as out of date, `/fhub bug` shows the client's value.
+- Players on a connected realm send one copy of each message per FableHub user online, so catch-up is slower for them. Not yet measured with a full guild.
 - Guild bank contents are only as fresh as the last time someone with FableHub opened the bank.
 - Ready check enchant reads need an inspect, which only works within about 28 yards.
 

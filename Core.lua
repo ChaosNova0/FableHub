@@ -2,13 +2,13 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.18.4"
+ns.VERSION = "0.19.0"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves
 -- to a new message channel so clients still on older versions can't send
 -- beta data into the new guild. Settings are kept.
-ns.DATA_EPOCH = 1
+ns.DATA_EPOCH = 2 -- 1 = Forever beta, 2 = launch (Nov 4, 2026)
 if FABLEHUB_TEST_EPOCH then ns.DATA_EPOCH = FABLEHUB_TEST_EPOCH end -- test suite only
 
 FableHub = ns -- global handle, handy for /dump FableHub while testing

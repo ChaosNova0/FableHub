@@ -1,4 +1,4 @@
-# FableHub 0.18.4
+# FableHub 0.19.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -100,3 +100,7 @@ Everyone stores what they hear, so you can still see an offline member's profess
 Nothing is sent during combat or boss fights.
 Officer data (raid nights, loot, announcements, raid plans, attendance) is only accepted from officers, so someone logging in later receives it once an officer with FableHub is online.
 Addon messages from players outside the guild are ignored, and formatting codes are stripped from anything received.
+Characters on a connected realm can't be heard on the guild's addon channel, so their FableHub notices and whispers other FableHub users instead. Nothing to set up.
+
+## Coming from the beta
+The first time you log in with 0.19.0, FableHub clears the guild data and character records it saved during the beta (your settings stay) and says so in chat. Open each profession window once again so your recipes are shared. Guildmates still on a beta version can't send old data in; they're told to update instead.
