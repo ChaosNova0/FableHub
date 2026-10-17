@@ -299,13 +299,25 @@ function ns.ResolveSender(sender)
   if ns.roster[sender] then return sender end
   local hit = resolved[sender]
   if hit ~= nil then return hit or nil end
-  local first, realm = FirstName(sender), RealmOf(sender)
+  -- the same "First Lastname" on any realm (guilds can span connected realms, and
+  -- names may arrive without a realm, which NormalizeName fills with ours)
+  local full = (sender:match("^([^-]+)") or sender):lower()
   local found
   for key in pairs(ns.roster) do
-    local r = RealmOf(key)
-    if FirstName(key) == first and (not realm or not r or r == realm) then
+    if (key:match("^([^-]+)") or key):lower() == full then
       if found then found = false break end -- two people share that name: can't tell
       found = key
+    end
+  end
+  if found == nil then
+    -- only a first name: a unique first-name match on the same realm
+    local first, realm = FirstName(sender), RealmOf(sender)
+    for key in pairs(ns.roster) do
+      local r = RealmOf(key)
+      if FirstName(key) == first and (not realm or not r or r == realm) then
+        if found then found = false break end
+        found = key
+      end
     end
   end
   resolved[sender] = found or false
