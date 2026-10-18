@@ -73,8 +73,14 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   local currentId = FableHubDB.settings.lastPlan
   local selectedKey             -- picked in the pool for click-to-place
   local filterText, maxOnly, onlineOnly = "", false, false
+  local signedOnly, signedFor = true, nil -- pool shows only the raid night's sign-ups (linked plans)
 
   local function Current()
+    if P.openPlan then -- asked to open a plan (e.g. from Raid nights)
+      currentId = P.openPlan
+      FableHubDB.settings.lastPlan = currentId
+      P.openPlan = nil
+    end
     local plan = P.Get(currentId)
     if plan and not plan.deleted then return plan end
     local list = P.List()
@@ -125,6 +131,8 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   end
   local shareBtn = T.Button(panel, "Share", 70, 22)
   shareBtn:SetPoint("LEFT", sizeBtns[#sizeBtns], "RIGHT", 14, 0)
+  local nightBtn = T.Button(panel, "From raid night", 118, 22)
+  nightBtn:SetPoint("LEFT", shareBtn, "RIGHT", 6, 0)
 
   local status = T.Text(panel, 11, 0.45)
   status:SetPoint("TOPLEFT", 0, -32)
@@ -200,6 +208,44 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     if plan and P.Share(plan) then ns.Print(("Shared \"%s\" with the guild."):format(plan.name)) end
   end)
 
+  nightBtn:SetScript("OnClick", function()
+    local E = ns.Events
+    local items = {}
+    local plan = Current()
+    if plan and plan.night then
+      items[#items + 1] = { text = "Unlink from " .. (P.NightName(plan.night) or "raid night"),
+        onClick = function() P.LinkNight(plan, nil) end }
+    end
+    local now = ns.Now()
+    local nights = E and E.Occurrences(now - 86400, now + 28 * 86400) or {}
+    if #nights > 0 then items[#items + 1] = { text = UI.Dim("New plan from:", 0.45) } end
+    for _, occ in ipairs(nights) do
+      local yes, maybe = 0, 0
+      for _, su in pairs(E.Signups(occ.id)) do
+        if P.NIGHT_YES[su.status or ""] then yes = yes + 1 elseif su.status == "T" then maybe = maybe + 1 end
+      end
+      local linked = #P.ForNight(occ.id) > 0
+      items[#items + 1] = {
+        text = ("%s %s  %s  %s"):format(E.FormatDay(occ.start), E.FormatTime(occ.start), occ.event.title or "",
+          UI.Dim(("%d coming%s%s"):format(yes, maybe > 0 and (", " .. maybe .. " maybe") or "",
+            linked and ", has a plan" or ""), 0.45)),
+        onClick = function()
+          local new = P.FromNight(occ.id)
+          if new then Select(new.id) end
+        end,
+      }
+    end
+    if #items == 0 then items[1] = { text = UI.Dim("No raid nights in the next 4 weeks", 0.5) } end
+    T.Menu(nightBtn, items, 340)
+  end)
+  nightBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine("Plan from a raid night")
+    GameTooltip:AddLine("Makes a new plan whose member list is the night's Accepted and Late sign-ups, with Tentative listed apart. Each person comes with the character and role they signed up with. New sign-ups appear as they come in; anyone placed who later declines is flagged, never moved.", 0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+  end)
+  nightBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   rankBtn:SetScript("OnClick", function()
     local names, n = P.RankNames()
     local items = {}
@@ -238,6 +284,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   bar:Add(deleteBtn, { gap = 4 })
   for i, b in ipairs(sizeBtns) do bar:Add(b, { gap = i == 1 and 14 or 3 }) end
   bar:Add(shareBtn, { gap = 14 })
+  bar:Add(nightBtn, { gap = 6 })
   bar:Add(status, { newRow = true, grow = true, min = 120 })
   bar:Add(rankBtn, { right = true, gap = 10 })
   bar:Below(pool, { x = 0, gap = 4 })
@@ -246,8 +293,18 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   poolSearch:SetPoint("TOPLEFT", 0, 0)
   local maxToggle = T.Toggle(pool, "Level " .. ns.MAX_LEVEL, function(v) maxOnly = v; panel:Refresh() end)
   maxToggle:SetPoint("TOPLEFT", 0, -28)
+  local signedToggle = T.Toggle(pool, "Signed up", function(v) signedOnly = v; panel:Refresh() end)
+  signedToggle:SetPoint("TOPLEFT", 0, -28)
+  signedToggle:SetChecked(true)
+  signedToggle:Hide()
   local onlineToggle = T.Toggle(pool, "Online", function(v) onlineOnly = v; panel:Refresh() end)
-  onlineToggle:SetPoint("LEFT", maxToggle, "RIGHT", 10, 0)
+  local function PlaceToggles(linked)
+    maxToggle:SetShown(not linked)
+    signedToggle:SetShown(linked)
+    onlineToggle:ClearAllPoints()
+    onlineToggle:SetPoint("LEFT", linked and signedToggle or maxToggle, "RIGHT", 10, 0)
+  end
+  PlaceToggles(false)
 
   local poolList = UI.CreateList(pool, {
     { title = "Member", flex = true },
@@ -302,6 +359,11 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     if not plan or not self.key then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     MemberTooltip(GameTooltip, P.Describe(plan, self.key))
+    if self.flag then
+      local why = self.flag == "D" and "Declined" or self.flag == "T" and "Changed to Tentative" or "Not signed up"
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine(why .. " on the raid night", 1, 0.45, 0.35)
+    end
     if P.CanEdit() then
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine("Drag to move. Right-click to remove. Ctrl-click to change role.", 0.6, 0.6, 0.6, true)
@@ -489,7 +551,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     local canEdit = P.CanEdit()
     local ar, ag, ab = T.Accent()
 
-    for _, b in ipairs({ newBtn }) do b:SetShown(canEdit) end
+    for _, b in ipairs({ newBtn, nightBtn }) do b:SetShown(canEdit) end
     for _, b in ipairs({ renameBtn, deleteBtn, shareBtn }) do b:SetShown(canEdit and plan ~= nil) end
     for i, b in ipairs(sizeBtns) do
       b:SetShown(canEdit and plan ~= nil)
@@ -524,15 +586,21 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     local cov = P.Coverage(plan)
     local myKey = ns.MyKey()
     local mySlot
+    local problems, flagged = P.NightProblems(plan), {}
+    for _, pr in ipairs(problems) do flagged[pr.key] = pr.status end
     for index, s in ipairs(slots) do
       local key = index <= plan.size and plan.slots[index] or nil
       s.key = key
       if key then
         local d = P.Describe(plan, key)
-        s.name:SetText(UI.NameCell(key, d.class, d.online))
+        local name = UI.NameCell(key, d.class, d.online)
+        if flagged[key] then name = UI.Colorize("! ", 1, 0.45, 0.35) .. name end
+        s.name:SetText(name)
+        s.flag = flagged[key]
         s.role:SetText(RoleTag(d.role, true))
         if key == myKey then mySlot = index end
       else
+        s.flag = nil
         s.name:SetText(UI.Dim(selectedKey and "Click to place" or "Empty", selectedKey and 0.5 or 0.22))
         s.role:SetText("")
       end
@@ -584,6 +652,13 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     else
       bits[#bits + 1] = UI.Colorize("Not shared yet", ar, ag, ab)
     end
+    if plan.night then
+      local nightName = P.NightName(plan.night)
+      bits[#bits + 1] = nightName and ("From " .. nightName) or UI.Dim("raid night removed", 0.45)
+      if #problems > 0 then
+        bits[#bits + 1] = UI.Colorize(("%d no longer coming"):format(#problems), 1, 0.45, 0.35)
+      end
+    end
     if mySlot then bits[#bits + 1] = ("You're in group %d"):format(math.ceil(mySlot / 5)) end
     if not canEdit then bits[#bits + 1] = "View only" end
     if P.TestMode() then bits[#bits + 1] = UI.Colorize("Test officer mode", 1, 0.55, 0.3) end
@@ -618,9 +693,46 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
           onDragStart = function() UI.BeginDrag({ key = key }, ns.ShortName(key)) end,
         }
       end
-      for _, m in ipairs(ns.AllMembers()) do AddPoolItem(m.key) end
-      for key in pairs(plan.extras) do AddPoolItem(key) end
-      poolList:SetItems(items, "Everyone matching is already in the plan")
+      local linked = plan.night ~= nil and P.NightName(plan.night) ~= nil
+      if signedFor ~= plan.id then signedFor = plan.id; signedOnly = true; signedToggle:SetChecked(true) end
+      PlaceToggles(linked)
+      if linked and signedOnly then
+        -- the night's people: Accepted/Late by role, then Tentative apart
+        local people = P.NightPeople(plan)
+        local roleOrder = { TANK = 1, HEALER = 2, MELEE = 3, RANGED = 4 }
+        local function ByRole(list)
+          table.sort(list, function(a, b)
+            local ra = roleOrder[P.Describe(plan, a).role or ""] or 9
+            local rb = roleOrder[P.Describe(plan, b).role or ""] or 9
+            if ra ~= rb then return ra < rb end
+            return a < b
+          end)
+          return list
+        end
+        for _, key in ipairs(ByRole(people.yes)) do
+          local before = #items
+          AddPoolItem(key)
+          if #items > before and people.status[key] == "L" then
+            items[#items].cols[1] = items[#items].cols[1] .. UI.Dim("  late", 0.45)
+          end
+        end
+        for key in pairs(plan.extras) do AddPoolItem(key) end
+        local before = #items
+        local maybe = ByRole(people.maybe)
+        for _, key in ipairs(maybe) do AddPoolItem(key) end
+        if #items > before then
+          table.insert(items, before + 1, { header = true,
+            cols = { UI.Dim(("TENTATIVE (%d)"):format(#items - before), 0.45), "", "" } })
+        end
+        poolList.sortable = false
+        poolList:SetItems(items, #people.yes + #people.maybe == 0 and "Nobody has signed up yet"
+          or "Everyone who signed up is in the plan")
+      else
+        for _, m in ipairs(ns.AllMembers()) do AddPoolItem(m.key) end
+        for key in pairs(plan.extras) do AddPoolItem(key) end
+        poolList.sortable = true
+        poolList:SetItems(items, "Everyone matching is already in the plan")
+      end
       UI.SetHint(selectedKey and ("Click a slot to place " .. ns.ShortName(selectedKey) .. ".")
         or "Drag members into groups. Ctrl-click a slot to change role, right-click to remove.")
     else

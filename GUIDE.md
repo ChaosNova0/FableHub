@@ -1,4 +1,4 @@
-# FableHub 0.19.0
+# FableHub 0.19.1
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -32,6 +32,11 @@ Guild roster and profession tracker for WoW: Forever.
   - Officers drag members from the pool into groups, or click a member then click a slot. Right-click removes; Ctrl-click changes role.
   - Each group shows its party buffs (totems, auras, shouts). The bottom shows raid buffs, boss debuffs and utility: lit = covered.
   - Spec and buffs are detected from each member's talents and spellbook. Members without FableHub are assumed to have their class's standard buffs.
+  - **From raid night** (officers) makes a plan from a raid night's sign-ups; so does **Make raid plan** on the raid night itself (which then becomes **Raid plan** and opens it).
+    - The member list shows only the night's Accepted and Late sign-ups (sorted tanks, healers, melee, ranged), with Tentative listed apart underneath. Untick **Signed up** to see the whole guild again.
+    - Each person comes with the character and role they signed up with. The plan is sized 10, 20 or 40 for how many are coming.
+    - New sign-ups appear in the list as they come in. Anyone already placed who later declines, goes Tentative or withdraws gets a red "!" (hover for why) and a count in the status line; nobody is moved for you.
+    - **From raid night > Unlink** turns it back into an ordinary plan.
   - Plans are saved; **Share** sends one to the guild. The Guild Master chooses which ranks count as officers.
   - Players not in the guild can be added by name and class.
   - The buff list lives in `Buffs.lua` and can be edited as Forever's classes change.
@@ -103,4 +108,4 @@ Addon messages from players outside the guild are ignored, and formatting codes 
 Characters on a connected realm can't be heard on the guild's addon channel, so their FableHub notices and whispers other FableHub users instead. Nothing to set up.
 
 ## Coming from the beta
-The first time you log in with 0.19.0, FableHub clears the guild data and character records it saved during the beta (your settings stay) and says so in chat. Open each profession window once again so your recipes are shared. Guildmates still on a beta version can't send old data in; they're told to update instead.
+The first time you log in with 0.19 or later, FableHub clears the guild data and character records it saved during the beta (your settings stay) and says so in chat. Open each profession window once again so your recipes are shared. Guildmates still on a beta version can't send old data in; they're told to update instead.

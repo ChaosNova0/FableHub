@@ -144,6 +144,90 @@ function P.AddExtra(plan, name, classFile)
 end
 
 ------------------------------------------------------------------------
+-- Raid nights: a plan can be made from a raid night and stays linked to it
+-- (plan.night = occId). Accepted and Late sign-ups make up the plan's pool;
+-- Tentative ones are listed apart. Nobody is moved automatically: people
+-- placed in groups who later decline or withdraw are only flagged.
+------------------------------------------------------------------------
+P.NIGHT_YES = { A = true, L = true }
+
+-- the linked night's sign-ups: yes = Accepted/Late, maybe = Tentative,
+-- status[charKey] = sign-up status (A/L/T/D) for everyone who answered
+function P.NightPeople(plan)
+  local out = { yes = {}, maybe = {}, status = {}, role = {} }
+  local E = ns.Events
+  if not plan or not plan.night or not E then return out end
+  for signer, su in pairs(E.Signups(plan.night)) do
+    local key = su.char or signer
+    if su.status and su.status ~= "R" then
+      out.status[key] = su.status
+      out.role[key] = su.role
+      if P.NIGHT_YES[su.status] then out.yes[#out.yes + 1] = key
+      elseif su.status == "T" then out.maybe[#out.maybe + 1] = key end
+    end
+  end
+  table.sort(out.yes); table.sort(out.maybe)
+  return out
+end
+
+-- people placed in the plan who are no longer coming: { {key, status}, ... }
+-- status D = declined, T = tentative now, "" = no answer / withdrawn
+function P.NightProblems(plan)
+  local list = {}
+  if not plan or not plan.night then return list end
+  local people = P.NightPeople(plan)
+  for i = 1, plan.size do
+    local key = plan.slots[i]
+    if key and not plan.extras[key] then
+      local st = people.status[key]
+      if not P.NIGHT_YES[st or ""] then list[#list + 1] = { key = key, status = st or "", slot = i } end
+    end
+  end
+  return list
+end
+
+function P.NightName(occId)
+  local E = ns.Events
+  local occ = E and E.Occ(occId)
+  if not occ then return nil end
+  return ("%s %s"):format(occ.event.title or "Raid", date("%d/%m", occ.start))
+end
+
+-- a new plan from a raid night: sized for the Accepted/Late count, with each
+-- person's signed-up role (Tentative roles too, for when they're added)
+function P.FromNight(occId)
+  local E = ns.Events
+  local occ = E and E.Occ(occId)
+  if not occ or not P.CanEdit() then return nil end
+  local plan = P.LinkNight(P.New(P.NightName(occId), 20), occId)
+  if not plan then return nil end
+  local n = #P.NightPeople(plan).yes
+  plan.size = n <= 10 and 10 or n <= 20 and 20 or 40
+  return plan
+end
+
+-- link (or with occId nil, unlink) an existing plan
+function P.LinkNight(plan, occId)
+  if not plan or not P.CanEdit() then return nil end
+  plan.night = occId
+  if occId then
+    local people = P.NightPeople(plan)
+    for key, role in pairs(people.role) do
+      if role and not plan.roles[key] then plan.roles[key] = role end
+    end
+  end
+  P.Touch(plan)
+  return plan
+end
+
+-- plans linked to a raid night
+function P.ForNight(occId)
+  local out = {}
+  for _, plan in ipairs(P.List()) do if plan.night == occId then out[#out + 1] = plan end end
+  return out
+end
+
+------------------------------------------------------------------------
 -- Who someone is, for planning purposes
 ------------------------------------------------------------------------
 -- class, role, spec, buff set (and whether buffs were detected or assumed)
@@ -209,7 +293,8 @@ end
 
 ------------------------------------------------------------------------
 -- Encoding
---   "1^id^ts^author^size^name^deleted^slots^roles^extras"
+--   "1^id^ts^author^size^name^deleted^slots^roles^extras^night"
+--   (night added in 0.19.1; older clients ignore it)
 ------------------------------------------------------------------------
 local function Safe(s) return (tostring(s or ""):gsub("[%^,=#]", " ")) end
 
@@ -222,6 +307,7 @@ function P.Encode(plan)
   return table.concat({
     "1", Safe(plan.id), Enc.ToB36(plan.ts), Safe(plan.author), tostring(plan.size), Safe(plan.name),
     plan.deleted and "1" or "0", table.concat(slots, ","), table.concat(roles, ","), table.concat(extras, ","),
+    Safe(plan.night),
   }, "^")
 end
 
@@ -249,6 +335,7 @@ function P.Decode(text)
     local k, c = item:match("^(.+)=(%u+)$")
     if k then plan.extras[k] = c end
   end
+  if f[11] and f[11]:match("^.+@%d+%.%d+$") then plan.night = f[11] end
   return plan
 end
 

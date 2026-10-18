@@ -73,6 +73,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
   local deleteBtn = T.Button(detail, "Delete", 60, 22)
   deleteBtn:SetPoint("RIGHT", skipBtn, "LEFT", -4, 0)
   local copyBtn = T.Button(detail, "Copy", 56, 22)
+  local planBtn = T.Button(detail, "Raid plan", 80, 22)
   title:SetJustifyH("LEFT")
   title:SetWordWrap(false)
   sub:SetPoint("RIGHT", detail, "RIGHT", 0, 0)
@@ -168,7 +169,8 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
   -- the night's title gives way to the officer buttons, which wrap if needed
   local head = UI.Toolbar(detail, { owner = panel })
   head:Add(title, { grow = true, min = 100 })
-  head:Add(copyBtn, { right = true, gap = 8 })
+  head:Add(planBtn, { right = true, gap = 8 })
+  head:Add(copyBtn, { gap = 4 })
   head:Add(deleteBtn, { gap = 4 })
   head:Add(skipBtn, { gap = 4 })
   head:Add(editBtn, { gap = 4 })
@@ -502,6 +504,26 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
   end)
   copyBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+  -- open this night's raid plan, or make one from its sign-ups
+  planBtn:SetScript("OnClick", function()
+    if not selectedOcc then return end
+    local plan = P.ForNight(selectedOcc)[1] or P.FromNight(selectedOcc)
+    if plan then
+      P.openPlan = plan.id
+      UI.ShowPanel("raids")
+    end
+  end)
+  planBtn:SetScript("OnEnter", function(self)
+    local has = selectedOcc and P.ForNight(selectedOcc)[1]
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine(has and "Open this night's raid plan" or "Make a raid plan from this night")
+    GameTooltip:AddLine(has and ("Opens \"" .. has.name .. "\" in Raid plans.")
+      or "Accepted and Late sign-ups become the plan's member list (Tentative listed apart), with the character and role each person signed up with. Arrange the groups in Raid plans.",
+      0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+  end)
+  planBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   saveBtn:SetScript("OnClick", function()
     for _, b in ipairs({ dayBox, timeBox, durBox, raidBox }) do if b:HasFocus() then b:ClearFocus() end end
     local anchors = {}
@@ -699,6 +721,10 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
     deleteBtn:SetShown(canEdit)
     skipBtn:SetShown(canEdit and ev.weekly and not past)
     copyBtn:SetShown(canEdit)
+    planBtn:SetShown(P.CanEdit() and not past)
+    local hasPlan = P.ForNight(occ.id)[1] ~= nil
+    planBtn:SetText(hasPlan and "Raid plan" or "Make raid plan")
+    planBtn:SetWidth(hasPlan and 80 or 112)
     head:Layout()
     local extra = head.h - 22 -- header wrapped onto more rows
 
