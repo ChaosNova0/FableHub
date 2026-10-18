@@ -210,6 +210,36 @@ function RC.Missing(p)
   return out
 end
 
+-- Your own result is kept (per character, in saved data) for the raid banner on
+-- Home: what to bring or fix before the next raid.
+--   FableHubDB.lastCheck[key] = { at, flask, food, enchants = { slot names } or nil }
+function RC.SaveMine()
+  local me = RC.last and RC.last.players
+  if not me then return end
+  for _, p in ipairs(me) do
+    if IsMe(p.unit) then
+      local key = ns.MyKey()
+      if not key then return end
+      FableHubDB.lastCheck = FableHubDB.lastCheck or {}
+      local names
+      if p.enchants then
+        names = {}
+        for _, slot in ipairs(p.enchants) do names[#names + 1] = ns.Consumables.SLOT_NAMES[slot] or tostring(slot) end
+      end
+      local old = FableHubDB.lastCheck[key]
+      FableHubDB.lastCheck[key] = { at = RC.last.at, flask = p.flaskOk and true or false, food = p.food and true or false,
+        enchants = names or (old and old.at == RC.last.at and old.enchants) or nil }
+      return
+    end
+  end
+end
+
+function RC.Mine(key)
+  return FableHubDB and FableHubDB.lastCheck and FableHubDB.lastCheck[key or ns.MyKey() or ""]
+end
+
+ns.On("READYCHECK_CHANGED", function() RC.SaveMine() end)
+
 ns.RegisterEvent("READY_CHECK", function()
   if not ns.Option("readyCheckAuto") then return end
   if not (IsInGroup and IsInGroup()) and not (IsInRaid and IsInRaid()) then return end

@@ -123,6 +123,81 @@ function ns.HomeTips()
   return tips
 end
 
+------------------------------------------------------------------------
+-- Raid banner: on a raid day (from midnight, or 12 hours before) until the
+-- raid ends, a banner across the top of Home with your sign-up, your group in
+-- the night's raid plan, and what your last ready check said to bring or fix.
+------------------------------------------------------------------------
+local BANNER_LEAD, SOON = 12 * 3600, 30 * 60
+local CHECK_MAX_AGE = 7 * 86400
+
+function ns.RaidBanner(now)
+  local E = ns.Events
+  if not E then return nil end
+  now = now or ns.Now()
+  local today = date("%Y%m%d", now)
+  local occ
+  for _, o in ipairs(E.Occurrences(now, now + 36 * 3600)) do
+    if o.finish >= now and (o.start - now <= BANNER_LEAD or date("%Y%m%d", o.start) == today) then occ = o; break end
+  end
+  if not occ then return nil end
+  local b = { occ = occ, signup = E.MySignup(occ.id) }
+  if b.signup and b.signup.status == "R" then b.signup = nil end
+  local st = b.signup and b.signup.status
+  b.running = now >= occ.start
+  b.soon = not b.running and occ.start - now <= SOON
+  b.char = (b.signup and b.signup.char) or ns.MyKey()
+
+  -- my group in the night's raid plan (the signed-up character, else any of mine)
+  local plan = P.ForNight(occ.id)[1]
+  b.plan = plan
+  if plan then
+    local mine = {}
+    for k in pairs(FableHubDB.chars or {}) do mine[k] = true end
+    mine[b.char or ""] = true
+    local slot = plan.slots and P.SlotOf(plan, b.char)
+    if not slot then
+      for i = 1, plan.size do if plan.slots[i] and mine[plan.slots[i]] then slot = i; break end end
+    end
+    if slot then
+      b.group = math.ceil(slot / 5)
+      b.mates = {}
+      for i = (b.group - 1) * 5 + 1, b.group * 5 do
+        if plan.slots[i] then b.mates[#b.mates + 1] = plan.slots[i] end
+      end
+      local grp = P.Coverage(plan).groups[b.group]
+      b.party = {}
+      for id in pairs(grp and grp.party or {}) do
+        local buff = ns.BUFF_BY_ID[id]
+        if buff then b.party[#b.party + 1] = buff end
+      end
+      table.sort(b.party, function(x, y) return (x.order or 0) < (y.order or 0) end)
+    end
+  end
+
+  -- bring / fix, from my last ready check (if recent)
+  local RC = ns.ReadyCheck
+  local chk = RC and RC.Mine and (RC.Mine(b.char) or RC.Mine())
+  if chk and now - (chk.at or 0) <= CHECK_MAX_AGE then
+    b.check = chk
+    b.fix, b.ok = {}, {}
+    if chk.flask then b.ok[#b.ok + 1] = "Flask" else b.fix[#b.fix + 1] = "No flask or elixirs" end
+    if chk.food then b.ok[#b.ok + 1] = "Food" else b.fix[#b.fix + 1] = "No food buff" end
+    if chk.enchants then
+      if #chk.enchants == 0 then b.ok[#b.ok + 1] = "Enchants" end
+      for _, slot in ipairs(chk.enchants) do b.fix[#b.fix + 1] = slot .. " not enchanted" end
+    end
+  end
+
+  -- how it looks: sign up / full / one line
+  if not st then b.mode = "signup"
+  elseif st == "D" then b.mode = "line"
+  elseif b.soon or b.running then b.mode = "full"
+  elseif b.check and #b.fix == 0 then b.mode = "line"
+  else b.mode = "full" end
+  return b
+end
+
 ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(panel)
   local function Toggle() panel:Refresh() end
   local motd = Card(panel, "motd", "MESSAGE OF THE DAY", Toggle)
@@ -241,6 +316,269 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
   TopEmpty(onlineList)
 
   ----------------------------------------------------------------------
+  -- Raid banner (see ns.RaidBanner): across the top, with a soft accent glow
+  ----------------------------------------------------------------------
+  local INSET = 6 -- room for the glow
+  local bn = CreateFrame("Frame", nil, panel)
+  bn:SetPoint("TOPLEFT", INSET, -INSET)
+  bn:SetPoint("TOPRIGHT", -INSET, -INSET)
+  bn.fill = T.Fill(bn, { 0, 0, 0, 0 })
+  T.Border(bn, 0.5)
+  bn.rings = {}
+  for i = 1, 6 do
+    local ring = CreateFrame("Frame", nil, bn)
+    ring:SetPoint("TOPLEFT", -i, i)
+    ring:SetPoint("BOTTOMRIGHT", i, -i)
+    T.Border(ring, 0, "BACKGROUND")
+    bn.rings[i] = ring
+  end
+  bn:Hide()
+  local bnHead = CreateFrame("Button", nil, bn) -- click to collapse to one line
+  bnHead:SetPoint("TOPLEFT", 0, 0)
+  bnHead:SetHeight(56)
+  bn.label = T.Text(bn, 11, 1)
+  bn.title = T.Text(bn, 17, 0.96)
+  bn.sub = T.Text(bn, 12, 0.55)
+  for _, fs in ipairs({ bn.label, bn.title, bn.sub }) do fs:SetJustifyH("LEFT"); fs:SetWordWrap(false) end
+  bn.planBtn = T.Button(bn, "Raid plan", 80, 22)
+  bn.checkBtn = T.Button(bn, "Check now", 84, 22)
+  bn.planBtn:SetPoint("TOPRIGHT", -14, -12)
+  bn.checkBtn:SetPoint("RIGHT", bn.planBtn, "LEFT", -6, 0)
+  bnHead:SetPoint("RIGHT", bn.checkBtn, "LEFT", -8, 0)
+  bn.checkBtn:SetScript("OnClick", function()
+    if ns.ReadyCheck then ns.ReadyCheck.Run("check"); panel:Refresh() end
+  end)
+  bn.checkBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine("Check now")
+    GameTooltip:AddLine("Checks your flask, food and enchants (and your group's, if you're in one), like at a ready check.", 0.8, 0.8, 0.8, true)
+    GameTooltip:Show()
+  end)
+  bn.checkBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  -- three boxes: sign-up, group, bring / fix
+  local function Box()
+    local f = CreateFrame("Frame", nil, bn)
+    T.Fill(f, { 0, 0, 0, 0.22 })
+    T.Border(f, 0.06)
+    f.head = T.Text(f, 10, T.section); f.head:SetPoint("TOPLEFT", 10, -8)
+    f.headR = T.Text(f, 10, T.section); f.headR:SetPoint("TOPRIGHT", -10, -8)
+    f.lines = {}
+    for i, size in ipairs({ 14, 12, 11, 11 }) do
+      local fs = T.Text(f, size, i == 1 and 0.92 or 0.6)
+      fs:SetPoint("TOPLEFT", 10, -24 - (i - 1) * 16 - (i > 1 and 3 or 0))
+      fs:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+      fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+      f.lines[i] = fs
+    end
+    return f
+  end
+  bn.boxes = { Box(), Box(), Box() }
+  local changeLink = CreateFrame("Button", nil, bn.boxes[1])
+  changeLink:SetSize(60, 14)
+  changeLink:SetPoint("BOTTOMLEFT", 10, 8)
+  changeLink.text = T.Text(changeLink, 11, 1); changeLink.text:SetPoint("LEFT"); changeLink.text:SetText("Change")
+  changeLink:SetScript("OnClick", function() Go("events") end)
+
+  -- sign-up row (when you haven't answered)
+  local bnSign = CreateFrame("Frame", nil, bn)
+  bnSign:SetHeight(24)
+  bnSign.text = T.Text(bnSign, 13, 0.85); bnSign.text:SetPoint("LEFT")
+  bnSign.btns = {}
+  for i, st in ipairs(order) do
+    local btn = T.Button(bnSign, labels[st], st == "T" and 76 or 62, 22)
+    if i == 1 then btn:SetPoint("LEFT", bnSign.text, "RIGHT", 12, 0) else btn:SetPoint("LEFT", bnSign.btns[i - 1], "RIGHT", 4, 0) end
+    local c = STATUS_COLORS[st]
+    if btn.GetFontString and btn:GetFontString() then btn:GetFontString():SetTextColor(c[1], c[2], c[3], 1) end
+    btn.status = st
+    bnSign.btns[i] = btn
+  end
+
+  -- one-line form
+  local bnLine = T.Text(bn, 12, 0.85)
+  bnLine:SetPoint("RIGHT", bn, "RIGHT", -14, 0)
+  bnLine:SetJustifyH("RIGHT"); bnLine:SetWordWrap(false)
+
+  local function Until(sec)
+    sec = math.max(0, sec)
+    local h, m = math.floor(sec / 3600), math.floor(sec % 3600 / 60)
+    if h > 0 then return ("%dh %02dm"):format(h, m) end
+    return ("%d minute%s"):format(m, m == 1 and "" or "s")
+  end
+  local function Names(keys, max)
+    local out = {}
+    for i, k in ipairs(keys) do
+      if i > max then out[#out + 1] = UI.Dim("+" .. (#keys - max), 0.5); break end
+      local rec = ns.GuildDB() and ns.GuildDB().members[k]
+      local cls = (rec and rec.class) or (ns.roster[k] and ns.roster[k].class)
+      out[#out + 1] = UI.NameCell(k, cls, true)
+    end
+    return table.concat(out, ", ")
+  end
+
+  -- fills the banner; returns its height (0 = hidden)
+  local function BannerRefresh(width)
+    local b = ns.RaidBanner()
+    if not b then bn:Hide(); return 0 end
+    local E = ns.Events
+    local occ, now = b.occ, ns.Now()
+    local ar, ag, ab = T.Accent()
+    local collapsedPref = FableHubDB.settings.homeCollapsed and FableHubDB.settings.homeCollapsed.banner
+    local mode = b.mode
+    if collapsedPref and not b.soon and mode ~= "signup" then mode = "line" end
+
+    -- glow: stronger in the last half hour
+    local glow = b.soon and 0.6 or (mode == "line" and 0.2 or 0.35)
+    bn.fill:SetColorTexture(ar, ag, ab, b.soon and 0.09 or 0.06)
+    bn:SetBorderColor(ar, ag, ab, 0.3 + glow * 0.6)
+    for i, ring in ipairs(bn.rings) do
+      local f = 1 - (i - 1) / #bn.rings
+      ring:SetBorderColor(ar, ag, ab, glow * 0.45 * f * f)
+    end
+
+    local heading = b.running and "RAID UNDERWAY" or (b.soon and "STARTING SOON" or "RAID TONIGHT")
+    if date("%Y%m%d", occ.start) ~= date("%Y%m%d", now) and not b.running then heading = "RAID TOMORROW" end
+    bn.label:SetText(UI.Colorize(heading, ar, ag, ab))
+    local when = b.running and ("ends " .. E.FormatTime(occ.finish)) or ("starts in " .. Until(occ.start - now))
+    local st = b.signup and b.signup.status
+    local role = b.signup and b.signup.role and ns.ROLE_NAMES[b.signup.role]
+
+    bn.planBtn:SetShown(mode ~= "line" and b.plan ~= nil)
+    bn.planBtn:SetScript("OnClick", function()
+      if b.plan then P.openPlan = b.plan.id; Go("raids") end
+    end)
+    bn.checkBtn:SetShown(mode == "full")
+    if not bn.planBtn:IsShown() then bn.checkBtn:SetPoint("RIGHT", bn, "TOPRIGHT", -14, -23)
+    else bn.checkBtn:SetPoint("RIGHT", bn.planBtn, "LEFT", -6, 0) end
+
+    bnHead:SetScript("OnClick", function()
+      if b.soon or b.mode == "signup" then return end -- stays open in the last half hour
+      local c = FableHubDB.settings.homeCollapsed or {}
+      FableHubDB.settings.homeCollapsed = c
+      c.banner = not c.banner or nil
+      panel:Refresh()
+    end)
+
+    for _, box in ipairs(bn.boxes) do box:Hide() end
+    bnSign:Hide()
+    bnLine:Hide()
+    bn.label:ClearAllPoints(); bn.title:ClearAllPoints(); bn.sub:ClearAllPoints()
+
+    if mode == "line" then
+      local h = 34
+      bn.label:SetPoint("LEFT", bn, "TOPLEFT", 14, -h / 2)
+      bn.title:SetPoint("LEFT", bn.label, "RIGHT", 12, 0)
+      T.SetFont(bn.title, 13)
+      bn.title:SetText(occ.event.title .. "  " .. UI.Dim(E.FormatTime(occ.start) .. "  ·  " .. when, 0.55))
+      bn.sub:SetText("")
+      local right
+      if st == "D" then right = UI.Colorize("Declined", STATUS_COLORS.D[1], STATUS_COLORS.D[2], STATUS_COLORS.D[3])
+      else
+        local c = STATUS_COLORS[st] or GREEN
+        right = UI.Colorize(E.STATUS[st] or "", c[1], c[2], c[3])
+        if b.group then right = right .. UI.Dim("  ·  Group " .. b.group, 0.6) end
+        if b.check and #b.fix == 0 then right = right .. UI.Dim("  ·  all set", 0.6) end
+      end
+      bnLine:SetPoint("RIGHT", bn, "TOPRIGHT", -14, -h / 2)
+      bnLine:SetText(right)
+      bnLine:Show()
+      bn.title:SetPoint("RIGHT", bnLine, "LEFT", -12, 0)
+      bnHead:SetHeight(h)
+      bn:SetHeight(h)
+      bn:Show()
+      return h
+    end
+
+    -- header (full and sign-up forms)
+    T.SetFont(bn.title, 17)
+    bn.label:SetPoint("TOPLEFT", 14, -12)
+    bn.title:SetPoint("TOPLEFT", 14, -27)
+    bn.title:SetPoint("RIGHT", bnHead, "RIGHT", 0, 0)
+    bn.sub:SetPoint("TOPLEFT", 14, -49)
+    bn.sub:SetPoint("RIGHT", bn, "RIGHT", -14, 0)
+    bn.title:SetText(occ.event.title .. (b.soon and UI.Colorize("  in " .. Until(occ.start - now), ar, ag, ab) or ""))
+    bn.sub:SetText(("%s  ·  %s - %s  ·  %s"):format(E.FormatDay(occ.start), E.FormatTime(occ.start),
+      E.FormatTime(occ.finish), b.soon and "be ready" or when))
+    bnHead:SetHeight(64)
+
+    if mode == "signup" then
+      bnSign:ClearAllPoints()
+      bnSign:SetPoint("TOPLEFT", 14, -72)
+      bnSign:SetPoint("RIGHT", bn, "RIGHT", -14, 0)
+      bnSign.text:SetText("You haven't signed up yet")
+      for _, btn in ipairs(bnSign.btns) do
+        btn:SetScript("OnClick", function()
+          local char = ns.MyKey()
+          E.SignUp(occ.id, btn.status, char, P.Describe(nil, char).role, "")
+        end)
+      end
+      bnSign:Show()
+      bn:SetHeight(108)
+      bn:Show()
+      return 108
+    end
+
+    -- full: three boxes
+    local boxW = math.floor(((width or 600) - 2 * INSET - 28 - 20) / 3)
+    for i, box in ipairs(bn.boxes) do
+      box:ClearAllPoints()
+      box:SetPoint("TOPLEFT", 14 + (i - 1) * (boxW + 10), -74)
+      box:SetSize(boxW, 84)
+      box.headR:SetText("")
+      for _, fs in ipairs(box.lines) do fs:SetText("") end
+      box:Show()
+    end
+    local b1, b2, b3 = bn.boxes[1], bn.boxes[2], bn.boxes[3]
+    b1.head:SetText("YOUR SIGN-UP")
+    local c = STATUS_COLORS[st] or GREEN
+    b1.lines[1]:SetText(UI.Colorize(E.STATUS[st] or "", c[1], c[2], c[3]))
+    local charRec = ns.GuildDB() and ns.GuildDB().members[b.char]
+    local charCls = (charRec and charRec.class) or (ns.roster[b.char] and ns.roster[b.char].class)
+    b1.lines[2]:SetText(UI.NameCell(b.char, charCls, true) .. (role and UI.Dim("  ·  " .. role, 0.6) or ""))
+    changeLink.text:SetTextColor(ar, ag, ab, 1)
+
+    b2.head:SetText("YOUR GROUP")
+    if b.plan then b2.headR:SetText(b.plan.name or "") end
+    if b.group then
+      b2.lines[1]:SetText("Group " .. b.group)
+      b2.lines[2]:SetText(Names(b.mates, 5))
+      local buffs = {}
+      for i, buff in ipairs(b.party or {}) do if i <= 3 then buffs[#buffs + 1] = buff.name end end
+      b2.lines[3]:SetText(#buffs > 0 and UI.Dim("Party buffs: " .. table.concat(buffs, ", "), 0.75) or "")
+    elseif b.plan then
+      b2.lines[1]:SetText(UI.Dim("Not placed yet", 0.6))
+      b2.lines[2]:SetText(UI.Dim("Officers are still arranging groups.", 0.75))
+    else
+      b2.lines[1]:SetText(UI.Dim("No raid plan yet", 0.6))
+      b2.lines[2]:SetText(UI.Dim("Groups show here once officers make one.", 0.75))
+    end
+
+    b3.head:SetText("BRING / FIX")
+    local NO = "|TInterface\\RaidFrame\\ReadyCheck-NotReady:12:12|t "
+    local YES = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t "
+    if b.check then
+      b3.headR:SetText("last check " .. (now - b.check.at < 86400 and E.FormatTime(b.check.at) or date("%a", b.check.at)))
+      local row = 1
+      for _, f in ipairs(b.fix) do
+        if row > 3 then break end
+        b3.lines[row]:SetText(NO .. UI.Colorize(f, 0.94, 0.63, 0.48))
+        row = row + 1
+      end
+      if row <= 4 and #b.ok > 0 then b3.lines[row]:SetText(YES .. UI.Dim(table.concat(b.ok, ", "), 0.7)) end
+      if #b.fix == 0 then b3.lines[1]:SetText(YES .. UI.Colorize("All set", GREEN[1], GREEN[2], GREEN[3])); b3.lines[2]:SetText(UI.Dim(table.concat(b.ok, ", "), 0.7)) end
+    else
+      b3.lines[1]:SetText(UI.Dim("No ready check yet", 0.6))
+      b3.lines[2]:SetText(UI.Dim("Check now looks at your flask, food and enchants.", 0.75))
+    end
+    for _, fs in ipairs(b3.lines) do T.SetFont(fs, 12) end
+    bn:SetHeight(172)
+    bn:Show()
+    return 172
+  end
+  -- keep the countdown current while Home is open
+  C_Timer.NewTicker(30, function() if panel:IsShown() and bn:IsShown() then panel:Refresh() end end)
+
+  local bannerH = 0
   local function Widths()
     local w = panel:GetWidth() or 680
     local lw = math.floor((w - 10) * 0.56)
@@ -249,10 +587,11 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
   end
   local function Layout()
     local gap = 10
-    local avail = panel:GetHeight() or 470
+    local top = bannerH > 0 and (bannerH + 2 * INSET + 6) or 0
+    local avail = (panel:GetHeight() or 470) - top
     for _, col in ipairs({ { cards = leftCards, side = "LEFT" }, { cards = rightCards, side = "RIGHT" } }) do
       local heights = FitColumn(col.cards, avail, gap)
-      local y = 0
+      local y = top
       for i, c in ipairs(col.cards) do
         c:Apply()
         c:ClearAllPoints()
@@ -483,6 +822,9 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     online:SetLabel(("ONLINE NOW (%d)"):format(n))
     onlineList:SetItems(rows, "Nobody online.")
     online.want = HEAD + math.max(1, #rows) * ROW + PAD
+    local okB, h = pcall(BannerRefresh, panel:GetWidth())
+    if not okB then ns.ReportError(h); bn:Hide(); h = 0 end
+    bannerH = h
     Layout()
 
     UI.SetHint(canEdit and "Click a card's title to collapse it. + Post adds an announcement; right-click one to pin or delete it."

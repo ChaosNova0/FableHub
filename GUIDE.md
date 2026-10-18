@@ -1,4 +1,4 @@
-# FableHub 0.19.2
+# FableHub 0.19.3
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -12,6 +12,12 @@ Guild roster and profession tracker for WoW: Forever.
 ## Use
 - `/fhub` or the minimap button opens the window. Drag the title bar to move it and the bottom-right corner to resize it. If the sidebar doesn't fit, scroll it with the mouse wheel. If a table is wider than the window, a thin bar appears under it: drag it, or hold Shift and use the mouse wheel, to scroll sideways. Pages adjust to the window's width: toolbar buttons wrap onto another row, search boxes shrink, side lists narrow, and Settings puts its second column underneath (scroll with the mouse wheel).
 - **Home** (where FableHub opens each session; after that it reopens where you left off):
+  - **Raid banner**: on a raid day (from midnight, or 12 hours before) until the raid ends, a glowing banner across the top shows the raid and when it starts, with:
+    - **Your sign-up** (status, character, role; Change opens Raid nights). Not signed up yet? Accept / Late / Tentative / Decline right there.
+    - **Your group** in the night's raid plan, your groupmates and the group's party buffs (once officers have made a plan from the raid night).
+    - **Bring / fix**: what your last ready check (or **Check now**) found missing on you: flask or elixirs, food, unenchanted gear. Checks over a week old are ignored.
+    - **Raid plan** opens the night's plan.
+    - When you're signed up and nothing needs fixing it shrinks to one line. Click its title to shrink it yourself. In the last 30 minutes it glows brighter and stays open.
   - Message of the Day, Announcements, Recent loot, Bank requests (officers only), Upcoming raids (with Accept / Late / Tentative / Decline for the next raid night), Crafting requests (ones you can craft and your own) and who's online.
   - **Guild activity**: level milestones (10/20/30/40/50/60), profession milestones (150/225/300), new recipes for rare or better items, members joining or leaving, raid nights scheduled and crafting requests completed. Kept for 30 days; only changes after installing are shown.
   - Cards shrink to fit what's in them; click a card's title to collapse or expand it (remembered).

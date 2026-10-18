@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.19.2-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.19.3-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -12,7 +12,7 @@ FableHub puts the guild's day-to-day organisation in one in-game window: roster 
 
 | Area | What it does |
 |---|---|
-| **Home** | Dashboard with Message of the Day, officer announcements (pinnable), guild activity feed, recent loot, upcoming raids with one-click sign-up, open craft and bank requests, who's online. |
+| **Home** | A glowing **raid banner** on raid days (your sign-up, your group in the raid plan, what to bring or fix). Dashboard with Message of the Day, officer announcements (pinnable), guild activity feed, recent loot, upcoming raids with one-click sign-up, open craft and bank requests, who's online. |
 | **Roster** | Members with level, rank, zone, notes, last seen and 30-day raid attendance. **Alts** are linked automatically from each player's account and grouped under their main. |
 | **Professions** | Every guild member's recipes, searchable by recipe or crafted item, with rarity colours and item level sorting. **Craft Requests** let members ask for an item, and crafters who know the recipe get notified. **Camping** has a camp guide and a camp planner. |
 | **Raids** | **Raid nights**: one-off or weekly events, shown in local time, with sign-ups (Accepted / Late / Tentative / Declined), roles, notes and automatic attendance. Officers can import sign-ups from **Raid-Helper** (Discord). **Raid plans**: a drag-and-drop group builder with buff coverage, which can be made straight from a raid night's sign-ups. **Ready check**: shows flasks, food, class buffs, blessings and enchants for the whole raid. |
@@ -112,7 +112,7 @@ pip install lupa            # Lua 5.1 runtime for Python
 python3 tests/run.py        # run from the repository root
 ```
 
-Expected output ends with something like `450 passed, 0 failed`.
+Expected output ends with something like `465 passed, 0 failed`.
 
 ### Static checks
 
