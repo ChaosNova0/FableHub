@@ -675,9 +675,8 @@ local function Build()
     local p = panels[id]
     local grp = p.group and groups[p.group]
     while grp and grp.parent and groups[grp.parent] do grp = groups[grp.parent] end -- emit from the top group
-    if p.group == "titlebar" then
-      -- opened from the title bar (Settings cog), not listed in the sidebar
-    elseif grp then
+    -- "titlebar" pages (Settings, Feature permissions) open from the title bar, not the sidebar
+    if p.group ~= "titlebar" and grp then
       if not emitted[grp.id] then
         emitted[grp.id] = true
         if s.navOpen[grp.id] == nil then s.navOpen[grp.id] = true end
@@ -721,7 +720,7 @@ local function Build()
           end
         end
       end
-    else
+    elseif p.group ~= "titlebar" then
       p.nav = T.NavButton(nav, p.title, p.icon)
       p.nav:SetScript("OnClick", function() ShowPanel(id) end)
       entries[#entries + 1] = { nav = p.nav }
@@ -1102,7 +1101,6 @@ function UI.MemberMatches(text, exclude)
 end
 
 function UI.PickMember(title, onPick, opts)
-  local T = ns.Theme
   opts = opts or {}
   if not picker then
     picker = T.Popup(240, 76 + PICK_ROWS * 20)

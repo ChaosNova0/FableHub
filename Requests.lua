@@ -121,7 +121,8 @@ local function Decode(text)
   local recipe, item, prof = Enc.FromB36(f[4]), Enc.FromB36(f[5]), Enc.FromB36(f[6])
   return {
     id = f[2], by = f[3], recipe = recipe > 0 and recipe or nil, item = item > 0 and item or nil, prof = prof > 0 and prof or nil,
-    qty = math.max(1, tonumber(f[7]) or 1), mats = R.MATS[f[8]] and f[8] or "none", note = f[9] ~= "" and f[9] or nil,
+    qty = math.max(1, math.min(99, tonumber(f[7]) or 1)), mats = R.MATS[f[8]] and f[8] or "none",
+    note = f[9] ~= "" and f[9]:sub(1, 80) or nil,
     status = f[10], claimer = f[11] ~= "" and f[11] or nil, created = Enc.FromB36(f[12]), ts = Enc.FromB36(f[13]),
   }, f[14]
 end

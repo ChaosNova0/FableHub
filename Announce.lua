@@ -47,7 +47,7 @@ local function Decode(text)
   if f[1] ~= "1" or not f[2] or f[2] == "" then return nil end
   -- the text may itself contain "^"-free content only (we strip it), so field 8 is the rest
   return { id = f[2], by = f[3], created = Enc.FromB36(f[4]), ts = Enc.FromB36(f[5]), pinned = f[6] == "1" or nil,
-           deleted = f[7] == "1" or nil, text = f[8] or "" }
+           deleted = f[7] == "1" or nil, text = (f[8] or ""):sub(1, A.MAX_LEN) }
 end
 
 local function Save(a)

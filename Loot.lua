@@ -591,11 +591,16 @@ ns.CommHandlers.I = function(sender, payload)
   local g = G()
   if not g then return end
   local changed, n = false, 0
+  local inst = f[2]:sub(1, 60)
+  -- the list only needs raid drops: a few thousand at most
+  local total = 0
+  for _ in pairs(g.seen) do total = total + 1 end
+  if total >= 5000 then return end
   for _, id36 in ipairs(Enc.Split(f[3] or "", ",")) do
     n = n + 1
     if n > 200 then break end -- a raid never drops this many new items at once
     local id = Enc.FromB36(id36)
-    if id > 0 and not g.seen[id] then g.seen[id] = f[2]; changed = true end
+    if id > 0 and not g.seen[id] then g.seen[id] = inst; changed = true end
   end
   if changed then ns.Fire("LOOT_CHANGED") end
 end

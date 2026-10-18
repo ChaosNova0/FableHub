@@ -208,7 +208,9 @@ local function DecodeTab(text)
     local slot, id, n, s = part:match("^(%d+)%.(%w+)%.(%d+)%.?(.*)$")
     slot = tonumber(slot)
     if slot and slot >= 1 and slot <= B.SLOTS then
-      t.items[slot] = { id = Enc.FromB36(id), n = tonumber(n) or 1, s = s ~= "" and s:gsub("_", ":") or nil }
+      -- s: the item string (enchant / random suffix), digits only, at most 120 characters
+      local str = (s ~= "" and #s <= 120 and s:match("^[%d_%-]+$")) and (s:gsub("_", ":")) or nil
+      t.items[slot] = { id = Enc.FromB36(id), n = tonumber(n) or 1, s = str }
     end
   end
   return tab, t
@@ -232,7 +234,7 @@ local function DecodeLog(text)
   local l = { ts = Enc.FromB36(f[3]), by = f[4], entries = {} }
   for _, part in ipairs(Enc.Split(f[5] or "", ";")) do
     local p = Enc.Split(part, "/")
-    if p[1] and p[1] ~= "" then
+    if p[1] and p[1] ~= "" and #l.entries < 100 then -- the game keeps 25 per tab
       l.entries[#l.entries + 1] = { k = p[1], who = p[2], id = Enc.FromB36(p[3]), n = tonumber(p[4]) or 0,
                                     at = Enc.FromB36(p[5]), from = tonumber(p[6]) or 0, to = tonumber(p[7]) or 0 }
     end

@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.19.3"
+ns.VERSION = "0.19.4"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves
@@ -83,10 +83,15 @@ end
 -- client labels everyone the same way. (On connected realms the roster gives
 -- names without a realm, and each client used to add its own realm, so the
 -- same character got different keys on different clients.)
+-- (asked for every message and roster entry, so it's remembered until the guild changes)
 function ns.KeyRealm()
+  if ns._keyRealm then return ns._keyRealm end
   if IsInGuild and IsInGuild() and GetGuildInfo then
     local _, _, _, guildRealm = GetGuildInfo("player")
-    if type(guildRealm) == "string" and guildRealm ~= "" then return (guildRealm:gsub("[%s%-]", "")) end
+    if type(guildRealm) == "string" and guildRealm ~= "" then
+      ns._keyRealm = (guildRealm:gsub("[%s%-]", ""))
+      return ns._keyRealm
+    end
   end
   return ns.MyRealm()
 end
@@ -394,6 +399,7 @@ ns.RegisterEvent("GUILD_ROSTER_UPDATE", function()
 end)
 
 ns.RegisterEvent("PLAYER_GUILD_UPDATE", function()
+  ns._keyRealm = nil -- joined or left a guild
   ns.MirrorMyRecord()
   ns.RequestRoster()
 end)

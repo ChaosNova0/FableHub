@@ -444,7 +444,11 @@ local function HandleHello(sender, payload, isReply)
   local proto = tonumber(f[1]) or 0
   -- prefer the sender's own idea of their key (matches their records), but
   -- only when we couldn't match them to the roster ourselves
-  if f[4] and f[4] ~= "" and not ns.roster[sender] then sender = f[4] end
+  if f[4] and f[4] ~= "" and not ns.roster[sender] then
+    local claimed, first = f[4]:match("^([^%s%-]+)"), sender:match("^([^%s%-]+)")
+    if claimed and first and claimed:lower() == first:lower() then sender = f[4] end
+  end
+  if f[2] and #f[2] > 16 then f[2] = f[2]:sub(1, 16) end
   ns.present[sender] = f[2] or "?"
   NoteVersion(sender, f[2])
   local g = ns.GuildDB()
@@ -487,10 +491,13 @@ local function HandleWant(sender, key)
 end
 
 local function HandleDigest(sender, payload)
+  local theirs = Enc.DecodeDigest(payload)
+  -- someone holds a newer "copy" of our record than ours: correct it
+  local me, mine = ns.MyKey(), ns.MyRecord()
+  if me and mine and (theirs[me] or 0) > (mine.ts or 0) and ns.TimeOK(theirs[me]) then ReassertMine(theirs[me]) end
   if not AmRelayFor(sender) then return end
   local g = ns.GuildDB()
   if not g then return end
-  local theirs = Enc.DecodeDigest(payload)
   local sent = 0
   for key, rec in pairs(g.members) do
     -- skip the asker's own record and our own (we answer that via H/W)
@@ -504,9 +511,31 @@ local function HandleDigest(sender, payload)
   ns.Debug(("relayed %d records to %s"):format(sent, sender))
 end
 
+-- someone sent a newer "copy" of our own record than we have (a forgery, or
+-- stale data from another client): make ours newer and send it again, so the
+-- real one wins everywhere
+local reasserting = false
+local function ReassertMine(theirTs)
+  local mine = ns.MyRecord()
+  if not mine or reasserting then return end
+  if (mine.ts or 0) <= theirTs then mine.ts = theirTs + 1 end
+  reasserting = true
+  C_Timer.After(3, function()
+    reasserting = false
+    ns.MirrorMyRecord()
+    ns.BroadcastRecord(ns.MyRecord())
+  end)
+end
+ns.ReassertMine = ReassertMine
+
 local function HandleFull(sender, payload)
   local rec = Enc.DecodeRecord(payload)
-  if not rec or rec.key == ns.MyKey() or not ns.TimeOK(rec.ts) then return end
+  if not rec or not ns.TimeOK(rec.ts) then return end
+  if rec.key == ns.MyKey() then
+    local mine = ns.MyRecord()
+    if mine and rec.ts >= (mine.ts or 0) then ReassertMine(rec.ts) end
+    return
+  end
   -- only guild members (stops made-up members piling up in everyone's saved data)
   if next(ns.roster) and not ns.roster[rec.key] then return end
   if ns.StoreRecord(rec) then
@@ -514,7 +543,29 @@ local function HandleFull(sender, payload)
   end
 end
 
+-- Size limits: most messages fit in a few parts; only these can be big.
+-- Anything longer is dropped, so nobody can make everyone buffer ~100 KB.
+local MAX_PARTS = { F = 120, B = 400, D = 200, Y = 120, A = 30, P = 30, Q = 40, d = 40, t = 30, l = 30, I = 12, G = 12, K = 12 }
+local DEFAULT_PARTS = 8
+local MAX_BUFFERS = 16 -- half-received messages per sender
+
+-- Catch-up requests make the answering member re-send a lot: answer each
+-- member's request of a kind at most once per DIGEST_GAP seconds, so a
+-- spammed /fhub sync (or a modified client) can't flood the guild channel.
+local DIGESTS = { D = true, Y = true, K = true, G = true, J = true, U = true, Q = true, d = true }
+local DIGEST_GAP = 20
+local lastDigest = {}
+
 local function Dispatch(sender, msgType, payload)
+  if DIGESTS[msgType] then
+    local k = sender .. "#" .. msgType
+    local now = GetTime()
+    if lastDigest[k] and now - lastDigest[k] < DIGEST_GAP then
+      ns.Debug("ignored repeated catch-up request " .. msgType .. " from " .. sender)
+      return
+    end
+    lastDigest[k] = now
+  end
   if msgType == "H" then HandleHello(sender, payload, false)
   elseif msgType == "R" then HandleHello(sender, payload, true)
   elseif msgType == "W" then HandleWant(sender, payload)
@@ -567,11 +618,14 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   if not msgType then return end
   part, total = tonumber(part), tonumber(total)
   if total == 1 then return Dispatch(sender, msgType, payload) end
-  if total > 400 or part < 1 or part > total then return end
+  if total > (MAX_PARTS[msgType] or DEFAULT_PARTS) or part < 1 or part > total then return end
 
   local bkey = sender .. "#" .. channel .. "#" .. id
   local buf = buffers[bkey]
   if not buf then
+    local open = 0
+    for k in pairs(buffers) do if k:sub(1, #sender + 1) == sender .. "#" then open = open + 1 end end
+    if open >= MAX_BUFFERS then return end
     buf = { total = total, parts = {}, got = 0, t = GetTime(), msgType = msgType }
     buffers[bkey] = buf
   end
@@ -678,6 +732,7 @@ ns.On("LOGIN", function()
   C_Timer.NewTicker(30, function()
     local now = GetTime()
     for k, buf in pairs(buffers) do if now - buf.t > 60 then buffers[k] = nil end end
+    for k, t in pairs(lastDigest) do if now - t > DIGEST_GAP then lastDigest[k] = nil end end
   end)
   TryStart()
 end)

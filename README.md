@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.19.3-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.19.4-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -66,6 +66,8 @@ FableHub is useful once a few guild members have it, and more useful once an off
 - When someone logs in, the online member with the newest FableHub version sends them anything they missed, so data catches up without anyone needing to be online at the same time. Officer data (raid nights, loot, announcements, raid plans, attendance) is only passed on by an online officer.
 - **Officer-only data** (announcements, raid nights, loot, attendance, raid plans, alt links set by officers) is only accepted when the author is an officer *and* it was sent by that officer or passed on by another officer. Every receiver checks this against the guild roster. The Guild Master chooses which ranks count as officers, and can narrow or widen each feature per rank (Settings > Feature permissions); receivers check the author's rank against that feature.
 - **Members' own data** (sign-ups, requests, guild bank reads) can only be changed by that member or an officer. Copies passed on by other members only fill in things a receiver doesn't have yet.
+- **Self-correcting copies:** if anyone sends a newer copy of *your* character record, sign-up or alt links than you have (made up, or stale), your FableHub sends the real one again with a newer time, so yours wins everywhere while you're online.
+- **Size and rate limits:** each message type has a size limit (most fit in a few parts; only records, That's My BIS imports and catch-up lists may be large), each sender can have only a few half-received messages at a time, and catch-up requests are answered at most once per 20 seconds per member. Received text fields (notes, announcements, item strings) are cut to their normal length.
 - **Other safeguards:** addon whispers from outside the guild are ignored, WoW formatting codes are stripped from everything received, changes dated more than five minutes in the future are refused, and each member can have at most 10 open craft requests and 10 open bank requests.
 - **Guild bank** contents are read when a member opens the bank in game. Tabs every rank may view go to the whole guild. Restricted tabs are whispered only to members whose rank may view them, using the permissions the Guild Master's FableHub reads from the game.
 - Messages are split into parts, throttled and paused during combat and boss encounters.
@@ -112,7 +114,7 @@ pip install lupa            # Lua 5.1 runtime for Python
 python3 tests/run.py        # run from the repository root
 ```
 
-Expected output ends with something like `465 passed, 0 failed`.
+Expected output ends with something like `474 passed, 0 failed`.
 
 ### Static checks
 

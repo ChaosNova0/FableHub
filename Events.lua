@@ -157,7 +157,9 @@ function E.SignUp(occId, status, char, role, note)
       ns.Send("S", EncodeSignup(occId, key, s))
     end
   end
-  local s = { status = status, char = char or me, role = role, note = (note or ""):sub(1, 60), ts = ns.Now() }
+  local cur = g.signups[occId][me]
+  local s = { status = status, char = char or me, role = role, note = (note or ""):sub(1, 60),
+              ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1) } -- two answers in one second both count
   g.signups[occId][me] = s
   ns.Send("S", EncodeSignup(occId, me, s))
   ns.Fire("EVENTS_CHANGED")
@@ -332,10 +334,24 @@ ns.CommHandlers.S = function(sender, payload)
   if f[1] ~= "1" then return end
   local occId, signer, ts, status = f[2], f[3], Enc.FromB36(f[4]), f[5]
   if not occId or not signer or not (E.STATUS[status] or status == "R") or not ns.TimeOK(ts) then return end
-  -- we're authoritative for our own sign-up, except officers importing from Raid-Helper
-  if signer == ns.MyKey() and not P.IsOfficer(sender, "raids") then return end
   local g = G()
   if not g then return end
+  -- we're authoritative for our own sign-up, except officers importing from Raid-Helper.
+  -- A newer "copy" from anyone else (forged, or stale) gets our real answer sent again.
+  if signer == ns.MyKey() and not P.IsOfficer(sender, "raids") then
+    local mine = g.signups[occId] and g.signups[occId][signer]
+    if ts >= (mine and mine.ts or 0) and E.Occ(occId) then
+      local fix = mine and {} or { status = "R", char = signer }
+      for k, v in pairs(mine or {}) do fix[k] = v end
+      fix.ts = ts + 1
+      g.signups[occId] = g.signups[occId] or {}
+      g.signups[occId][signer] = fix
+      ns.Send("S", EncodeSignup(occId, signer, fix))
+    end
+    return
+  end
+  -- guild members only, so made-up names don't pile up in saved data
+  if next(ns.roster) and not ns.roster[signer] then return end
   g.signups[occId] = g.signups[occId] or {}
   local cur = g.signups[occId][signer]
   if cur and (cur.ts or 0) >= ts then return end
@@ -344,8 +360,9 @@ ns.CommHandlers.S = function(sender, payload)
   if cur and not ns.FirstHand(sender, signer, "raids") then return end
   local role = f[7]
   if role == "" or not ns.ROLE_NAMES[role] then role = nil end
-  g.signups[occId][signer] = { status = status, char = f[6] ~= "" and f[6] or signer, role = role, note = f[8] or "", ts = ts,
-                               src = (f[9] and f[9] ~= "") and f[9] or nil }
+  local char = (f[6] ~= "" and f[6] or signer):sub(1, 64)
+  g.signups[occId][signer] = { status = status, char = char, role = role, note = (f[8] or ""):sub(1, 60), ts = ts,
+                               src = (f[9] and f[9] ~= "") and f[9]:sub(1, 70) or nil }
   ns.Fire("EVENTS_CHANGED")
 end
 

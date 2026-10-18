@@ -182,7 +182,7 @@ ns.RegisterPanel("guildbank", "Contents", nil, function(panel)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
 
   local function SetColumns(titles)
-    for i, h in ipairs(list.headers) do list.columns[i].title = titles[i] or "" end
+    for i in ipairs(list.headers) do list.columns[i].title = titles[i] or "" end
   end
 
   ----------------------------------------------------------------------

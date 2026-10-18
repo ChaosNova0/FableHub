@@ -210,8 +210,20 @@ ns.CommHandlers.X = function(sender, payload)
   if next(ns.roster) and not (ns.roster[char] and ns.roster[e.main]) then return end
   if e.manual then
     if not ns.OfficerSent(sender, e.by, "alts") then return end -- officer links: officers only
-  elseif All()[char] and not ns.FirstHand(sender, e.by) then
-    return -- copies passed on by other members only fill gaps
+  else
+    -- a member's link of one of OUR characters that disagrees with ours (made
+    -- up, or stale): publish ours again, newer, so ours wins everywhere
+    local g = ns.GuildDB()
+    local mine = false
+    for _, k in ipairs(A.MyChars()) do if k == char then mine = true end end
+    if mine and g and #A.MyChars() >= 2 and e.main ~= A.MyMain() and e.ts >= (g.myAltsTs or 0) then
+      g.myAltsTs = e.ts + 1
+      C_Timer.After(2, A.Publish)
+      return
+    end
+    if All()[char] and not ns.FirstHand(sender, e.by) then
+      return -- copies passed on by other members only fill gaps
+    end
   end
   if Store(char, e) then ns.Fire("ALTS_CHANGED") end
 end
