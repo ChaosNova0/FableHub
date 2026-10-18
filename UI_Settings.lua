@@ -144,6 +144,7 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
     T.Menu(self, items, 200)
   end)
   local rankNote = R:Note()
+  R:Button("Feature permissions", 220, function() UI.ShowPanel("permissions") end)
   local lootToggle = R:Option("Announce awarded loot in raid chat", "lootAnnounce")
   if ns.IsDeveloper() then -- only on the developer's Battle.net account
     R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)

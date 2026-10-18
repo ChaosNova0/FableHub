@@ -193,7 +193,7 @@ ns.RegisterPanel("requests", "Craft Requests", nil, function(panel)
     end
     if r.by ~= me then items[#items + 1] = { text = "Whisper " .. ns.ShortName(r.by), onClick = function() UI.Whisper(r.by) end } end
     if r.claimer and r.claimer ~= me then items[#items + 1] = { text = "Whisper " .. ns.ShortName(r.claimer), onClick = function() UI.Whisper(r.claimer) end } end
-    if (r.status == "open" or r.status == "claimed") and (r.by == me or P.CanEdit()) then
+    if (r.status == "open" or r.status == "claimed") and (r.by == me or P.CanEdit("crafts")) then
       items[#items + 1] = { text = UI.Colorize(r.by == me and "Cancel my request" or "Cancel (officer)", 0.95, 0.45, 0.4), onClick = function() R.Cancel(r) end }
     end
     if #items == 0 then items[1] = { text = UI.Dim("Nothing to do here", 0.5) } end

@@ -125,7 +125,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     if i == 1 then b:SetPoint("LEFT", deleteBtn, "RIGHT", 14, 0) else b:SetPoint("LEFT", sizeBtns[i - 1], "RIGHT", 3, 0) end
     b:SetScript("OnClick", function()
       local plan = Current()
-      if plan and P.CanEdit() then P.Resize(plan, size) end
+      if plan and P.CanEdit("plans") then P.Resize(plan, size) end
     end)
     sizeBtns[i] = b
   end
@@ -149,7 +149,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
         checked = cur and plan.id == cur.id, onClick = function() Select(plan.id) end,
       }
     end
-    if P.CanEdit() then
+    if P.CanEdit("plans") then
       items[#items + 1] = { text = UI.Dim("+ New plan", 0.7), onClick = function() newBtn:Click() end }
     end
     if #items == 0 then items[1] = { text = UI.Dim("No plans yet", 0.5) } end
@@ -338,7 +338,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   local function DoAdd()
     local plan = Current()
     local name = addBox:GetText() or ""
-    if plan and name ~= "" and P.CanEdit() then
+    if plan and name ~= "" and P.CanEdit("plans") then
       P.AddExtra(plan, name, addClass)
       addBox:SetText("")
       addBox:ClearFocus()
@@ -364,7 +364,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine(why .. " on the raid night", 1, 0.45, 0.35)
     end
-    if P.CanEdit() then
+    if P.CanEdit("plans") then
       GameTooltip:AddLine(" ")
       GameTooltip:AddLine("Drag to move. Right-click to remove. Ctrl-click to change role.", 0.6, 0.6, 0.6, true)
     end
@@ -432,19 +432,19 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
       end
       s.OnDrop = function(self, payload)
         local plan = Current()
-        if plan and P.CanEdit() and payload.key then P.Place(plan, payload.key, self.index) end
+        if plan and P.CanEdit("plans") and payload.key then P.Place(plan, payload.key, self.index) end
       end
       UI.RegisterDropTarget(s)
       s:SetScript("OnEnter", SlotTooltip)
       s:SetScript("OnLeave", function() GameTooltip:Hide() end)
       s:SetScript("OnDragStart", function(self)
-        if not self.key or not P.CanEdit() then return end
+        if not self.key or not P.CanEdit("plans") then return end
         GameTooltip:Hide()
         UI.BeginDrag({ key = self.key, fromSlot = self.index }, ns.ShortName(self.key))
       end)
       s:SetScript("OnClick", function(self, button)
         local plan = Current()
-        if not plan or not P.CanEdit() then return end
+        if not plan or not P.CanEdit("plans") then return end
         if button == "RightButton" then
           if self.key then P.Remove(plan, self.index) end
         elseif IsControlKeyDown() and self.key then
@@ -548,7 +548,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
   ----------------------------------------------------------------------
   function panel:Refresh()
     local plan = Current()
-    local canEdit = P.CanEdit()
+    local canEdit = P.CanEdit("plans")
     local ar, ag, ab = T.Accent()
 
     for _, b in ipairs({ newBtn, nightBtn }) do b:SetShown(canEdit) end

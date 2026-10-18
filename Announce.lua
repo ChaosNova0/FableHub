@@ -51,7 +51,7 @@ local function Decode(text)
 end
 
 local function Save(a)
-  if not P.CanEdit() then return nil end
+  if not P.CanEdit("announce") then return nil end
   a.ts = math.max(ns.Now(), (a.ts or 0) + 1)
   a.editor = ns.MyKey()
   All()[a.id] = a
@@ -87,7 +87,7 @@ ns.CommHandlers.Z = function(sender, payload)
   local a = Decode(payload)
   if not a then return end
   local editor = Enc.Split(payload, "^")[9]
-  if not ns.OfficerSent(sender, editor) or not ns.TimeOK(a.ts) then return end
+  if not ns.OfficerSent(sender, editor, "announce") or not ns.TimeOK(a.ts) then return end
   local cur = All()[a.id]
   if cur and (cur.ts or 0) >= a.ts then return end
   a.editor = editor

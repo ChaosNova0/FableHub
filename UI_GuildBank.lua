@@ -81,6 +81,9 @@ ns.RegisterPanel("guildbank", "Contents", nil, function(panel)
 
   local reqPop
   local function OpenRequest(id)
+    if not P.CanEdit("bankask") then
+      return ns.Print("Your guild rank can't ask for guild bank items (the Guild Master chooses this).")
+    end
     if not reqPop then
       reqPop = T.Popup(270, 112)
       reqPop.title = T.Text(reqPop, 12, 0.85)
@@ -342,7 +345,7 @@ ns.RegisterPanel("bankrequests", "Requests", nil, function(panel)
   list.sortable = false
 
   local function Requests()
-    local officer = P.CanEdit()
+    local officer = P.CanEdit("bankreq")
     local items = {}
     for _, r in ipairs(B.Requests()) do
       local req = r
@@ -389,7 +392,7 @@ ns.RegisterPanel("bankrequests", "Requests", nil, function(panel)
   function panel:Refresh()
     local n = B.OpenCount()
     info:SetText(n > 0 and ("%d open request%s"):format(n, n == 1 and "" or "s") or "No open requests")
-    UI.SetHint(P.CanEdit() and "Right-click a request to hand it over or decline it."
+    UI.SetHint(P.CanEdit("bankreq") and "Right-click a request to hand it over or decline it."
       or "Right-click your request to cancel it. To ask for something, right-click it on the Contents page.")
     Requests()
   end

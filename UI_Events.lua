@@ -591,7 +591,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
       tt:AddLine(" ")
       tt:AddLine("Click to mark as attended or not.", 0.6, 0.6, 0.6)
     end
-    if P.CanEdit() then
+    if P.CanEdit("raids") then
       if not item.canFix then tt:AddLine(" ") end
       tt:AddLine("Right-click to change their answer, role or note.", 0.6, 0.6, 0.6)
     end
@@ -623,7 +623,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
   end
 
   local function OfficerMenu(owner, occId, key)
-    if not P.CanEdit() or not occId then return end
+    if not P.CanEdit("raids") or not occId then return end
     local cur = E.Signups(occId)[key]
     local status = cur and cur.status ~= "R" and cur.status
     local items = {}
@@ -661,7 +661,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
   end
 
   function panel:Refresh()
-    local canEdit = P.CanEdit()
+    local canEdit = P.CanEdit("raids")
     newBtn:SetShown(canEdit)
     pastToggle:ClearAllPoints()
     rhBtn:SetShown(canEdit)
@@ -721,7 +721,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
     deleteBtn:SetShown(canEdit)
     skipBtn:SetShown(canEdit and ev.weekly and not past)
     copyBtn:SetShown(canEdit)
-    planBtn:SetShown(P.CanEdit() and not past)
+    planBtn:SetShown(P.CanEdit("plans") and not past)
     local hasPlan = P.ForNight(occ.id)[1] ~= nil
     planBtn:SetText(hasPlan and "Raid plan" or "Make raid plan")
     planBtn:SetWidth(hasPlan and 80 or 112)

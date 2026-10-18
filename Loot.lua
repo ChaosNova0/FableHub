@@ -245,7 +245,7 @@ function L.ParseTMB(text)
 end
 
 function L.Import(text)
-  if not P.CanEdit() then return nil, "Only officers can import priorities." end
+  if not P.CanEdit("loot") then return nil, "Only officers can import priorities." end
   local tmb, err = L.ParseTMB(text)
   if not tmb then return nil, err end
   local g = G()
@@ -305,7 +305,7 @@ end
 
 ns.CommHandlers.B = function(sender, payload)
   local tmb = L.DecodeTMB(payload)
-  if not tmb or not ns.OfficerSent(sender, tmb.by) or not ns.TimeOK(tmb.ts) then return end
+  if not tmb or not ns.OfficerSent(sender, tmb.by, "loot") or not ns.TimeOK(tmb.ts) then return end
   local g = G()
   if not g or (g.tmb and (g.tmb.ts or 0) >= tmb.ts) then return end
   g.tmb = tmb
@@ -351,7 +351,7 @@ local function EncodeManual(itemID, m)
 end
 
 local function Put(itemID, key, typ, order, deleted)
-  if not P.CanEdit() or not itemID or not key then return nil end
+  if not P.CanEdit("loot") or not itemID or not key then return nil end
   local all = Manual()
   all[itemID] = all[itemID] or {}
   typ = typ == L.TYPE_PRIO and L.TYPE_PRIO or L.TYPE_WISH
@@ -375,7 +375,7 @@ end
 
 ns.CommHandlers.M = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not ns.OfficerSent(sender, f[7]) or not ns.TimeOK(Enc.FromB36(f[6])) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[7], "loot") or not ns.TimeOK(Enc.FromB36(f[6])) then return end
   local itemID, key = Enc.FromB36(f[2]), f[3]
   if itemID <= 0 or not key or key == "" then return end
   local typ = tonumber(f[4]) == L.TYPE_PRIO and L.TYPE_PRIO or L.TYPE_WISH
@@ -513,7 +513,7 @@ function L.Record(itemID, key, opts)
   opts = opts or {}
   local g = G()
   if not g or not itemID or not key then return nil end
-  if not P.CanEdit() then return nil end
+  if not P.CanEdit("loot") then return nil end
   local at = opts.at or ns.Now()
   local existing = FindRecent(itemID, key, at)
   if existing and not existing.deleted then
@@ -535,7 +535,7 @@ function L.Record(itemID, key, opts)
 end
 
 function L.Delete(e)
-  if not P.CanEdit() then return end
+  if not P.CanEdit("loot") then return end
   e.deleted, e.ts, e.by = true, ns.Now(), ns.MyKey()
   ns.Send("L", EncodeEntry(e))
   ns.Fire("LOOT_CHANGED")
@@ -543,7 +543,7 @@ end
 
 ns.CommHandlers.L = function(sender, payload)
   local e = DecodeEntry(payload)
-  if not e or not ns.OfficerSent(sender, e.by) or not ns.TimeOK(e.ts) then return end
+  if not e or not ns.OfficerSent(sender, e.by, "loot") or not ns.TimeOK(e.ts) then return end
   local g = G()
   if not g then return end
   local cur = g.loot[e.id]
@@ -708,7 +708,7 @@ end
 
 ns.RegisterEvent("CHAT_MSG_LOOT", function(msg)
   if type(msg) ~= "string" or (issecretvalue and issecretvalue(msg)) then return end
-  if not P.CanEdit() then return end
+  if not P.CanEdit("loot") then return end
   local inRaid, inst = InRaidInstance()
   if not inRaid then return end
   local who, link = L.ParseLootMessage(msg)

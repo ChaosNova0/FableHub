@@ -90,7 +90,7 @@ end
 ------------------------------------------------------------------------
 local counter = 0
 function E.Save(ev)
-  if not P.CanEdit() then return nil end
+  if not P.CanEdit("raids") then return nil end
   if not ev.id then
     counter = counter + 1
     ev.id = "e" .. Enc.ToB36(ns.Now()) .. Enc.ToB36(math.random(0, 1295)) .. counter
@@ -167,7 +167,7 @@ end
 -- officers: change anyone's answer, role or note (changes = { status, role, note }; role false = none)
 -- status "R" clears their answer. Marked as changed by this officer (hidden src "o:<key>").
 function E.OfficerSet(occId, key, changes)
-  if not P.CanEdit() or not E.Occ(occId) or not key then return nil end
+  if not P.CanEdit("raids") or not E.Occ(occId) or not key then return nil end
   local g = G()
   g.signups[occId] = g.signups[occId] or {}
   local cur = g.signups[occId][key]
@@ -216,7 +216,7 @@ function E.Present(occ, key)
 end
 
 function E.Override(occId, key, present)
-  if not P.CanEdit() then return end
+  if not P.CanEdit("raids") then return end
   local a = AttRecord(occId)
   a.ov[key] = { v = present, ts = ns.Now(), by = ns.MyKey() }
   a.ts = ns.Now()
@@ -263,7 +263,7 @@ end
 
 local lastBroadcast = {}
 local function RecordTick()
-  if not IsInGuild() or not P.CanEdit() then return end
+  if not IsInGuild() or not P.CanEdit("raids") then return end
   if not (IsInRaid and IsInRaid()) then return end
   local occ = E.Active()
   if not occ then return end
@@ -319,7 +319,7 @@ ns.CommHandlers.V = function(sender, payload)
   local ev = E.DecodeEvent(payload)
   if not ev or not ns.TimeOK(ev.ts) then return end
   -- the author must be an officer, and so must whoever passed it on
-  if not P.IsOfficer(ev.author) or not P.IsOfficer(sender) then return end
+  if not ns.OfficerSent(sender, ev.author, "raids") then return end
   local cur = E.Get(ev.id)
   if cur and (cur.ts or 0) >= ev.ts then return end
   E.All()[ev.id] = ev
@@ -333,7 +333,7 @@ ns.CommHandlers.S = function(sender, payload)
   local occId, signer, ts, status = f[2], f[3], Enc.FromB36(f[4]), f[5]
   if not occId or not signer or not (E.STATUS[status] or status == "R") or not ns.TimeOK(ts) then return end
   -- we're authoritative for our own sign-up, except officers importing from Raid-Helper
-  if signer == ns.MyKey() and not P.IsOfficer(sender) then return end
+  if signer == ns.MyKey() and not P.IsOfficer(sender, "raids") then return end
   local g = G()
   if not g then return end
   g.signups[occId] = g.signups[occId] or {}
@@ -341,7 +341,7 @@ ns.CommHandlers.S = function(sender, payload)
   if cur and (cur.ts or 0) >= ts then return end
   -- only the player themselves or an officer can change a sign-up; copies passed
   -- on by other members (catch-up) only fill in sign-ups we don't have yet
-  if cur and not ns.FirstHand(sender, signer) then return end
+  if cur and not ns.FirstHand(sender, signer, "raids") then return end
   local role = f[7]
   if role == "" or not ns.ROLE_NAMES[role] then role = nil end
   g.signups[occId][signer] = { status = status, char = f[6] ~= "" and f[6] or signer, role = role, note = f[8] or "", ts = ts,
@@ -351,7 +351,7 @@ end
 
 ns.CommHandlers.A = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not ns.OfficerSent(sender, f[3]) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[3], "raids") then return end
   local occId, ts = f[2], Enc.FromB36(f[4])
   if not ns.TimeOK(ts) then return end
   if not E.Occ(occId) then return end
@@ -368,7 +368,7 @@ end
 
 ns.CommHandlers.O = function(sender, payload)
   local f = Enc.Split(payload, "^")
-  if f[1] ~= "1" or not ns.OfficerSent(sender, f[6]) then return end
+  if f[1] ~= "1" or not ns.OfficerSent(sender, f[6], "raids") then return end
   local occId, key, v, ts = f[2], f[3], f[4] == "1", Enc.FromB36(f[5])
   if not ns.TimeOK(ts) then return end
   if not E.Occ(occId) then return end
@@ -436,7 +436,7 @@ end
 -- raid nights dated more than 2 years ahead are mistakes (e.g. an import with a typo'd year):
 -- officers delete them so they don't linger unseen
 local function RemoveFarFuture()
-  if not P.CanEdit() then return end
+  if not P.CanEdit("raids") then return end
   local limit = ns.Now() + 2 * 365 * 86400
   for _, ev in pairs(E.All()) do
     if not ev.deleted then

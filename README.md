@@ -4,7 +4,7 @@
 
 FableHub puts the guild's day-to-day organisation in one in-game window: roster and alts, professions and craft requests, raid sign-ups and plans, ready checks, loot priorities and the guild bank. Everything is shared between guild members over the hidden addon channel. There's no website, bot or account to set up.
 
-![Version](https://img.shields.io/badge/version-0.19.1-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.19.2-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
@@ -18,7 +18,7 @@ FableHub puts the guild's day-to-day organisation in one in-game window: roster 
 | **Raids** | **Raid nights**: one-off or weekly events, shown in local time, with sign-ups (Accepted / Late / Tentative / Declined), roles, notes and automatic attendance. Officers can import sign-ups from **Raid-Helper** (Discord). **Raid plans**: a drag-and-drop group builder with buff coverage, which can be made straight from a raid night's sign-ups. **Ready check**: shows flasks, food, class buffs, blessings and enchants for the whole raid. |
 | **Loot** | Imports **That's My BIS** prio lists and wishlists, lets officers add or remove entries, shows prio info in item tooltips, opens an award window when an officer loots, and keeps an automatic loot history. |
 | **Guild Bank** | Browse every tab, search, gold and transaction logs from anywhere. **Follows the guild's own tab permissions**, and members can request items from officers. |
-| **Settings** | Every option in one place (cog in the title bar): alerts, minimap button, window opacity, officer ranks. |
+| **Settings** | Every option in one place (cog in the title bar): alerts, minimap button, window opacity, officer ranks, and **feature permissions**: the Guild Master ticks which ranks may use each officer feature. |
 
 The window can be resized, and pages adjust to its width. Tables scroll sideways and toolbars wrap. If [EllesmereUI](https://www.curseforge.com/wow/addons/ellesmereui) is installed, FableHub uses its accent colour.
 
@@ -64,7 +64,7 @@ FableHub is useful once a few guild members have it, and more useful once an off
 
 - Each player's addon shares **only their own characters** (level, professions, recipes, talents, alts) on the guild addon channel. Everyone stores what they hear, so you can still see offline members.
 - When someone logs in, the online member with the newest FableHub version sends them anything they missed, so data catches up without anyone needing to be online at the same time. Officer data (raid nights, loot, announcements, raid plans, attendance) is only passed on by an online officer.
-- **Officer-only data** (announcements, raid nights, loot, attendance, raid plans, alt links set by officers) is only accepted when the author is an officer *and* it was sent by that officer or passed on by another officer. Every receiver checks this against the guild roster. The Guild Master chooses which ranks count as officers.
+- **Officer-only data** (announcements, raid nights, loot, attendance, raid plans, alt links set by officers) is only accepted when the author is an officer *and* it was sent by that officer or passed on by another officer. Every receiver checks this against the guild roster. The Guild Master chooses which ranks count as officers, and can narrow or widen each feature per rank (Settings > Feature permissions); receivers check the author's rank against that feature.
 - **Members' own data** (sign-ups, requests, guild bank reads) can only be changed by that member or an officer. Copies passed on by other members only fill in things a receiver doesn't have yet.
 - **Other safeguards:** addon whispers from outside the guild are ignored, WoW formatting codes are stripped from everything received, changes dated more than five minutes in the future are refused, and each member can have at most 10 open craft requests and 10 open bank requests.
 - **Guild bank** contents are read when a member opens the bank in game. Tabs every rank may view go to the whole guild. Restricted tabs are whispered only to members whose rank may view them, using the permissions the Guild Master's FableHub reads from the game.
@@ -112,7 +112,7 @@ pip install lupa            # Lua 5.1 runtime for Python
 python3 tests/run.py        # run from the repository root
 ```
 
-Expected output ends with something like `433 passed, 0 failed`.
+Expected output ends with something like `450 passed, 0 failed`.
 
 ### Static checks
 
@@ -143,6 +143,7 @@ Guild data for a guild not visited for 90 days is removed automatically.
 - Register events through `ns.RegisterEvent`, which skips events the client doesn't know.
 - New page toolbars should use `UI.Toolbar` so they reflow with the window width. Tables should use `UI.CreateList`.
 - Choosing a guild member should go through `UI.PickMember` (the searchable guild list).
+- Officer features are gated per feature: `P.CanEdit("feature")` for the local player and `ns.OfficerSent(sender, author, "feature")` / `ns.FirstHand(sender, actor, "feature")` for received data (feature ids in `P.FEATURES`, Plans.lua). A new officer feature needs an entry there.
 - Received officer data must pass `ns.OfficerSent(sender, author)` (author is an officer, and the sender is that author or another officer). Changes to a member's own data use `ns.FirstHand(sender, actor)`; second-hand copies only fill gaps. Check incoming timestamps with `ns.TimeOK(ts)`. Catch-up for officer data is answered by `ns.AmOfficerRelayFor`.
 
 ---

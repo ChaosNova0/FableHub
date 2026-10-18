@@ -117,7 +117,7 @@ function ns.HomeTips()
       tips[#tips + 1] = "Open the guild bank once, so FableHub learns which ranks may see each tab."
     end
   end
-  if g and P.CanEdit() and not g.tmb then
+  if g and P.CanEdit("loot") and not g.tmb then
     tips[#tips + 1] = "Officers: import your That's My BIS priorities under Loot > Priorities."
   end
   return tips
@@ -266,7 +266,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
 
   function panel:Refresh()
     Widths()
-    local canEdit = P.CanEdit()
+    local canEdit = P.CanEdit("announce")
     local now = ns.Now()
     local ar, ag, ab = T.Accent()
 
@@ -421,7 +421,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     reqs.want = HEAD + math.max(1, #rows) * ROW + PAD
 
     -- Guild bank requests: officers only
-    if canEdit and ns.GuildBank then
+    if P.CanEdit("bankreq") and ns.GuildBank then
       rightCards = { raids, reqs, bankReqs, online }
       bankReqs:Show()
       local B = ns.GuildBank

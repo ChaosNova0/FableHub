@@ -30,15 +30,134 @@ function P.TestMode()
   return FableHubDB and FableHubDB.settings and FableHubDB.settings.testOfficer and ns.IsDeveloper() and true or false
 end
 
-function P.IsOfficer(key)
-  -- local test mode: only your own addon treats you as an officer
-  if key == ns.MyKey() and P.TestMode() then return true end
-  local idx = P.RankIndex(key)
+------------------------------------------------------------------------
+-- Feature permissions: the Guild Master ticks which ranks may use each
+-- feature (g.perms[feature] = { [rankIndex] = true }). A feature the Guild
+-- Master hasn't changed follows the officer ranks setting (member features:
+-- every rank). The Guild Master can always use everything. Receivers check
+-- the author's rank against the feature, so this isn't just hiding buttons.
+------------------------------------------------------------------------
+P.FEATURES = {
+  { id = "announce", name = "Announcements", desc = "Post, pin and delete announcements on Home." },
+  { id = "raids", name = "Raid nights", desc = "Create, edit and cancel raid nights, change anyone's sign-up, correct attendance, import from Raid-Helper. Attendance is recorded by these ranks." },
+  { id = "plans", name = "Raid plans", desc = "Create, edit and share raid plans." },
+  { id = "loot", name = "Loot", desc = "Import That's My BIS, edit prio lists, the award window, loot history. Loot history is recorded by these ranks." },
+  { id = "alts", name = "Alts", desc = "Link, unlink and set the main of anyone's characters." },
+  { id = "bankreq", name = "Bank requests", desc = "Hand over or decline guild bank requests, and get a chat alert for new ones." },
+  { id = "crafts", name = "Craft requests", desc = "Cancel anyone's craft request." },
+  { id = "bankask", name = "Ask the bank", desc = "Ask for guild bank items (Guild Bank > Requests).", member = true },
+}
+P.FEATURE_BY_ID = {}
+for _, f in ipairs(P.FEATURES) do P.FEATURE_BY_ID[f.id] = f end
+
+-- may guild rank `idx` use `feature`?
+function P.RankAllowed(feature, idx)
+  if idx == 0 then return true end
+  local g = ns.GuildDB()
+  local set = g and g.perms and g.perms[feature]
+  if set then return idx ~= nil and set[idx] == true end
+  local f = P.FEATURE_BY_ID[feature]
+  if f and f.member then return true end
   return idx ~= nil and idx <= P.OfficerRank()
 end
 
-function P.CanEdit()
-  return P.IsOfficer(ns.MyKey())
+function P.Customised(feature)
+  local g = ns.GuildDB()
+  return g and g.perms and g.perms[feature] ~= nil or false
+end
+
+-- without a feature: an officer (officer ranks setting). With one: allowed to
+-- use that feature.
+function P.IsOfficer(key, feature)
+  -- local test mode: only your own addon treats you as an officer
+  if key == ns.MyKey() and P.TestMode() then return true end
+  local idx = P.RankIndex(key)
+  if feature then
+    if idx == nil then -- not in the roster (yet): only open member features
+      local f = P.FEATURE_BY_ID[feature]
+      return f and f.member and not P.Customised(feature) or false
+    end
+    return P.RankAllowed(feature, idx)
+  end
+  return idx ~= nil and idx <= P.OfficerRank()
+end
+
+function P.CanEdit(feature)
+  return P.IsOfficer(ns.MyKey(), feature)
+end
+
+-- Guild Master: tick or untick a rank for a feature
+function P.SetPerm(feature, idx, on)
+  local g = ns.GuildDB()
+  if not g or not P.IsGuildMaster() or not P.FEATURE_BY_ID[feature] or idx == 0 then return false end
+  g.perms = g.perms or {}
+  if not g.perms[feature] then -- start from what applies now
+    local set = {}
+    local _, n = P.RankNames()
+    for i = 1, math.max(n, 10) - 1 do if P.RankAllowed(feature, i) then set[i] = true end end
+    g.perms[feature] = set
+  end
+  g.perms[feature][idx] = on and true or nil
+  g.permsTs, g.permsBy = math.max(ns.Now(), (g.permsTs or 0) + 1), ns.MyKey() -- two changes in one second still count
+  P.SendPerms()
+  ns.Fire("PLANS_CHANGED")
+  return true
+end
+
+-- Guild Master: back to following the officer ranks setting
+function P.ResetPerm(feature)
+  local g = ns.GuildDB()
+  if not g or not P.IsGuildMaster() then return false end
+  if feature then
+    if g.perms then g.perms[feature] = nil end
+  else
+    g.perms = nil
+  end
+  g.permsTs, g.permsBy = math.max(ns.Now(), (g.permsTs or 0) + 1), ns.MyKey() -- two changes in one second still count
+  P.SendPerms()
+  ns.Fire("PLANS_CHANGED")
+  return true
+end
+
+-- "1^by^ts^feature=1.2.3;feature2=;..." (only features the Guild Master changed;
+-- an empty list = only the Guild Master)
+function P.EncodePerms(g)
+  local parts = {}
+  for _, f in ipairs(P.FEATURES) do
+    local set = g.perms and g.perms[f.id]
+    if set then
+      local ranks = {}
+      for i in pairs(set) do ranks[#ranks + 1] = i end
+      table.sort(ranks)
+      parts[#parts + 1] = f.id .. "=" .. table.concat(ranks, ".")
+    end
+  end
+  return table.concat({ "1", g.permsBy or "", Enc.ToB36(g.permsTs or 0), table.concat(parts, ";") }, "^")
+end
+
+function P.DecodePerms(text)
+  local f = Enc.Split(text, "^")
+  if f[1] ~= "1" or not f[2] or f[2] == "" then return nil end
+  local perms
+  for _, item in ipairs(Enc.Split(f[4] or "", ";")) do
+    local id, list = item:match("^(%a+)=([%d%.]*)$")
+    if id and P.FEATURE_BY_ID[id] then
+      perms = perms or {}
+      local set = {}
+      for i in list:gmatch("%d+") do
+        local n = tonumber(i)
+        if n and n >= 1 and n <= 20 then set[n] = true end
+      end
+      perms[id] = set
+    end
+  end
+  return { by = f[2], ts = Enc.FromB36(f[3]), perms = perms }
+end
+
+function P.SendPerms()
+  local g = ns.GuildDB()
+  if not g or not g.permsTs then return end
+  ns.Send("c", P.EncodePerms(g))
 end
 
 function P.IsGuildMaster()
@@ -86,7 +205,7 @@ function P.Get(id) return id and P.All()[id] end
 
 local counter = 0
 function P.New(name, size)
-  if not P.CanEdit() then return nil end
+  if not P.CanEdit("plans") then return nil end
   counter = counter + 1
   local id = Enc.ToB36(ns.Now()) .. Enc.ToB36(math.random(0, 1295)) .. counter
   local plan = {
@@ -198,7 +317,7 @@ end
 function P.FromNight(occId)
   local E = ns.Events
   local occ = E and E.Occ(occId)
-  if not occ or not P.CanEdit() then return nil end
+  if not occ or not P.CanEdit("plans") then return nil end
   local plan = P.LinkNight(P.New(P.NightName(occId), 20), occId)
   if not plan then return nil end
   local n = #P.NightPeople(plan).yes
@@ -208,7 +327,7 @@ end
 
 -- link (or with occId nil, unlink) an existing plan
 function P.LinkNight(plan, occId)
-  if not plan or not P.CanEdit() then return nil end
+  if not plan or not P.CanEdit("plans") then return nil end
   plan.night = occId
   if occId then
     local people = P.NightPeople(plan)
@@ -343,7 +462,7 @@ end
 -- Sharing
 ------------------------------------------------------------------------
 function P.Share(plan)
-  if not P.CanEdit() then return false end
+  if not P.CanEdit("plans") then return false end
   if P.TestMode() and (P.RankIndex(ns.MyKey()) or 99) > P.OfficerRank() then
     ns.Print("Test officer mode: guildmates will ignore this plan, because your real rank isn't an officer rank.")
   end
@@ -356,7 +475,7 @@ function P.Share(plan)
 end
 
 function P.Delete(plan)
-  if not P.CanEdit() then return false end
+  if not P.CanEdit("plans") then return false end
   plan.deleted = true
   plan.ts = ns.Now()
   plan.author = ns.MyKey()
@@ -375,7 +494,7 @@ end
 function ns.SendPlanDigest()
   local g = ns.GuildDB()
   if not g then return end
-  local parts = { "!cfg=" .. Enc.ToB36(g.officerRankTs or 0) }
+  local parts = { "!cfg=" .. Enc.ToB36(g.officerRankTs or 0), "!perm=" .. Enc.ToB36(g.permsTs or 0) }
   for id, plan in pairs(P.All()) do
     if plan.shared then parts[#parts + 1] = Safe(id) .. "=" .. Enc.ToB36(plan.ts or 0) end
   end
@@ -386,7 +505,7 @@ ns.CommHandlers.P = function(sender, payload)
   local plan = P.Decode(payload)
   if not plan then return end
   -- only accept plans last edited by an officer, sent by an officer
-  if not ns.OfficerSent(sender, plan.author) or not ns.TimeOK(plan.ts) then
+  if not ns.OfficerSent(sender, plan.author, "plans") or not ns.TimeOK(plan.ts) then
     ns.Debug("ignored plan from non-officer " .. tostring(plan.author))
     return
   end
@@ -412,6 +531,17 @@ ns.CommHandlers.C = function(sender, payload)
   ns.Fire("PLANS_CHANGED")
 end
 
+-- feature permissions: only from the Guild Master (first-hand or passed on by an officer)
+ns.CommHandlers.c = function(sender, payload)
+  local d = P.DecodePerms(payload)
+  if not d or P.RankIndex(d.by) ~= 0 then return end
+  if not ns.OfficerSent(sender, d.by) or not ns.TimeOK(d.ts) then return end
+  local g = ns.GuildDB()
+  if not g or (g.permsTs or 0) >= d.ts then return end
+  g.perms, g.permsTs, g.permsBy = d.perms, d.ts, d.by
+  ns.Fire("PLANS_CHANGED")
+end
+
 ns.CommHandlers.Q = function(sender, payload)
   if not ns.AmOfficerRelayFor(sender) then return end -- plans are officer data
   local theirs = {}
@@ -421,6 +551,7 @@ ns.CommHandlers.Q = function(sender, payload)
   end
   local g = ns.GuildDB()
   if g and (g.officerRankTs or 0) > (theirs["!cfg"] or 0) then P.SendConfig() end
+  if g and (g.permsTs or 0) > (theirs["!perm"] or 0) then P.SendPerms() end
   for id, plan in pairs(P.All()) do
     if plan.shared and (theirs[id] or 0) < (plan.ts or 0) then ns.Send("P", P.Encode(plan)) end
   end

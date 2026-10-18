@@ -62,7 +62,7 @@ ns.RegisterPanel("alts", "Alts", nil, function(panel)
     if mine and A.MyMain() ~= key then
       items[#items + 1] = { text = "Make this my main", onClick = function() A.SetMyMain(key); panel:Refresh() end }
     end
-    if P.CanEdit() then
+    if P.CanEdit("alts") then
       local main = A.MainOf(key)
       if main ~= key then
         items[#items + 1] = { text = "Make main of this group", onClick = function() A.MakeMain(key); panel:Refresh() end }
@@ -105,7 +105,7 @@ ns.RegisterPanel("alts", "Alts", nil, function(panel)
   end
 
   function panel:Refresh()
-    local officer = P.CanEdit()
+    local officer = P.CanEdit("alts")
     UI.SetHint(officer and "Click a main to show or hide alts. Right-click a character to link, unlink or change the main."
       or "Alts are linked automatically when a player logs in with FableHub. Right-click your own character to make it your main.")
     mainBtn:SetText("My main: " .. ns.ShortName(A.MyMain() or ns.MyKey()))

@@ -535,11 +535,11 @@ local function Allowed(old, new, relayed)
   local actor = new.actor
   if not actor or actor == "" then return false end
   if not old then
-    if new.status == "open" then return actor == new.by end
+    if new.status == "open" then return actor == new.by and P.IsOfficer(actor, "bankask") end
     -- we missed the earlier steps (caught up from a relay): trust the requester or an officer
-    return relayed and (actor == new.by or P.IsOfficer(actor)) or false
+    return relayed and (actor == new.by or P.IsOfficer(actor, "bankreq")) and P.IsOfficer(new.by, "bankask") or false
   end
-  if P.IsOfficer(actor) then return true end
+  if P.IsOfficer(actor, "bankreq") then return true end
   return actor == old.by and (new.status == "cancelled" or new.status == "open")
 end
 
@@ -555,7 +555,7 @@ local function ApplyReq(r, silent)
   if not Allowed(old, r, true) then return false end
   b.requests[r.id] = r
   if not silent then
-    if not old and r.by ~= ns.MyKey() and P.CanEdit() and ns.Option("alertBankRequest") then
+    if not old and r.by ~= ns.MyKey() and P.CanEdit("bankreq") and ns.Option("alertBankRequest") then
       local info = ns.Loot and ns.Loot.ItemInfo(r.item)
       ns.Print(("%s asks the guild bank for %s x%d. Type /fhub to hand it over."):format(ns.ShortName(r.by),
         (info and info.link) or ("item " .. r.item), r.qty))
@@ -582,7 +582,7 @@ end
 
 local counter = 0
 function B.Request(itemID, qty, note)
-  if not itemID or not IsInGuild() then return nil end
+  if not itemID or not IsInGuild() or not P.CanEdit("bankask") then return nil end
   counter = counter + 1
   return CommitReq({ id = "b" .. Enc.ToB36(ns.Now()) .. Enc.ToB36(math.random(0, 1295)) .. counter, by = ns.MyKey(),
                      item = itemID, qty = math.max(1, math.min(999, tonumber(qty) or 1)),

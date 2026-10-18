@@ -241,7 +241,7 @@ local function Build(panel)
 end
 
 function M.Open(panel)
-  if not ns.Plans.CanEdit() then return end
+  if not ns.Plans.CanEdit("raids") then return end
   if not dlg then Build(panel) end
   dlg:Reset()
   dlg:Show()

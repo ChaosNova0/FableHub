@@ -357,18 +357,21 @@ function ns.ResolveSender(sender)
   return found or nil
 end
 
--- officer-only data: the author must be an officer, and it must come from that
--- officer or be passed on by another officer (members can't pass it on)
-function ns.OfficerSent(sender, author)
+-- officer-only data: the author must be an officer (with `feature`: allowed to
+-- use that feature, see Plans.lua), and it must come from the author or be
+-- passed on by an officer or someone with that feature (members can't pass it on)
+function ns.OfficerSent(sender, author, feature)
   local P = ns.Plans
-  if not author or author == "" or not P.IsOfficer(author) then return false end
-  return sender == author or P.IsOfficer(sender)
+  if not author or author == "" or not P.IsOfficer(author, feature) then return false end
+  return sender == author or P.IsOfficer(sender) or (feature ~= nil and P.IsOfficer(sender, feature))
 end
 
 -- a change made by `actor` that arrived from `sender`: did it come first-hand
--- (or from an officer)? Second-hand copies from members only fill gaps.
-function ns.FirstHand(sender, actor)
-  return sender == actor or ns.Plans.IsOfficer(sender)
+-- (or from an officer / someone with `feature`)? Second-hand copies from
+-- members only fill gaps.
+function ns.FirstHand(sender, actor, feature)
+  local P = ns.Plans
+  return sender == actor or P.IsOfficer(sender) or (feature ~= nil and P.IsOfficer(sender, feature))
 end
 
 -- timestamps more than 5 minutes ahead of the server clock are refused, so a

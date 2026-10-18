@@ -175,7 +175,7 @@ local function BuildAward()
 end
 
 function L.OpenAward(itemIDs)
-  if not P.CanEdit() then return ns.Print("Only officers can award loot.") end
+  if not P.CanEdit("loot") then return ns.Print("Only officers can award loot.") end
   if not award then BuildAward() end
   award.drops = itemIDs
   award.awarded = award.awarded or {}
@@ -186,7 +186,7 @@ function L.OpenAward(itemIDs)
 end
 
 ns.RegisterEvent("LOOT_OPENED", function()
-  if not P.CanEdit() or not (IsInRaid and IsInRaid()) then return end
+  if not P.CanEdit("loot") or not (IsInRaid and IsInRaid()) then return end
   local instanceType = GetInstanceInfo and select(2, GetInstanceInfo())
   local ids = {}
   for slot = 1, (GetNumLootItems and GetNumLootItems()) or 0 do
@@ -621,8 +621,8 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
   byPlayer:SetScript("OnClick", function() SetMode("player") end)
 
   function panel:Refresh()
-    importBtn:SetShown(P.CanEdit())
-    addBtn:SetShown(P.CanEdit())
+    importBtn:SetShown(P.CanEdit("loot"))
+    addBtn:SetShown(P.CanEdit("loot"))
     if add:IsShown() then add:Refresh() end
     local g = L.G()
     local tmb = g and g.tmb
@@ -632,7 +632,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
       info:SetText(("From That's My BIS: %d items, %d entries. Imported %s by %s."):format(n, tmb.count or 0,
         UI.TimeAgo(tmb.ts), ns.ShortName(tmb.by)))
     else
-      info:SetText(P.CanEdit() and "No priorities yet. Import your That's My BIS export to get started."
+      info:SetText(P.CanEdit("loot") and "No priorities yet. Import your That's My BIS export to get started."
         or "No priorities yet. Officers import them from That's My BIS.")
     end
 
@@ -665,7 +665,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
         end
       end
       itemList:SetItems(rows, "No items yet")
-      UI.SetHint(P.CanEdit() and "Hover an item for its lists. Use Add item to a list to put any item on someone's prio list or wishlist."
+      UI.SetHint(P.CanEdit("loot") and "Hover an item for its lists. Use Add item to a list to put any item on someone's prio list or wishlist."
         or "Hover an item for its full prio list and wishlist. These also show on any item tooltip in game.")
     else
       local ar, ag, ab = T.Accent()
@@ -721,7 +721,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
           bits[#bits + 1] = ("%d items in the last 30 days"):format(L.CountReceived(key, 30))
         end
         paneSub:SetText(table.concat(bits, "  ·  "))
-        paneAdd:SetShown(P.CanEdit() and key ~= nil)
+        paneAdd:SetShown(P.CanEdit("loot") and key ~= nil)
         paneAdd:SetText("Add item for " .. person.name)
         paneAdd:SetScript("OnClick", function() OpenAdd(key) end)
 
@@ -741,12 +741,12 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
             sort = { iname:lower(), it.prio or 999, it.wish or 999, it.has and it.has.at or 0 },
             tooltip = function(tt)
               ItemTooltip(tt, id)
-              if it.pManual or it.wManual or P.CanEdit() then tt:AddLine(" ") end
+              if it.pManual or it.wManual or P.CanEdit("loot") then tt:AddLine(" ") end
               if it.pManual or it.wManual then tt:AddLine("* added in FableHub", 0.6, 0.6, 0.6) end
-              if P.CanEdit() then tt:AddLine("Right-click to remove it from a list.", 0.6, 0.6, 0.6) end
+              if P.CanEdit("loot") then tt:AddLine("Right-click to remove it from a list.", 0.6, 0.6, 0.6) end
             end,
             onClick = function(_, button)
-              if button ~= "RightButton" or not P.CanEdit() then return end
+              if button ~= "RightButton" or not P.CanEdit("loot") then return end
               local menu = {}
               local who = person.name
               if it.prio then
@@ -763,7 +763,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
         end
         paneList:SetItems(items, "Nothing on their lists")
       end
-      UI.SetHint(P.CanEdit() and "Pick a member to see their items. * = added in FableHub. Right-click an item to remove it from a list."
+      UI.SetHint(P.CanEdit("loot") and "Pick a member to see their items. * = added in FableHub. Right-click an item to remove it from a list."
         or "Pick a member to see their prio list and wishlist.")
     end
   end
@@ -846,7 +846,7 @@ ns.RegisterPanel("loothistory", "Loot history", nil, function(panel)
   bar:Below(list)
 
   function panel:Refresh()
-    local canEdit = P.CanEdit()
+    local canEdit = P.CanEdit("loot")
     addRow:SetShown(canEdit)
     addStatus:SetShown(canEdit)
     announce:SetShown(canEdit)

@@ -1,4 +1,4 @@
-# FableHub 0.19.1
+# FableHub 0.19.2
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -85,7 +85,8 @@ Guild roster and profession tracker for WoW: Forever.
   - General: minimap button, open on Home each session, window opacity, reset window.
   - Alerts in chat (each can be turned off): raid nights you haven't signed up for, new craft requests you can make, open requests at login, your request claimed or done, and the request count on the minimap button.
   - Raids: run the ready check automatically.
-  - Officers: officer ranks (Guild Master), announce awarded loot in raid chat.
+  - Officers: officer ranks (Guild Master), feature permissions, announce awarded loot in raid chat.
+  - **Feature permissions** (button under Officers): a grid of features and guild ranks. The Guild Master ticks which ranks may use each one: Announcements, Raid nights, Raid plans, Loot, Alts, Bank requests (handing over / declining), Craft requests (cancelling anyone's), and Ask the bank (asking for guild bank items). Hover a feature for exactly what it covers. A feature the Guild Master hasn't changed follows the officer ranks setting (Ask the bank: every rank); **Reset** puts one back, **Reset all** puts them all back. The Guild Master can always use everything. Everyone else can look at the grid but not change it. It's checked by every guildmate's FableHub, not just by hiding buttons.
   - Data: sync now, rescan your character, clear stored guild data (click twice), debug messages.
 - If EllesmereUI is installed, FableHub uses its accent colour.
 - **Open each of your profession windows once** after installing so your recipes are shared.

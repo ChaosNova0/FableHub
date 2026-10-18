@@ -82,7 +82,7 @@ end
 
 -- key = character key, "-" to ignore this person, nil to forget the link
 function RH.Link(userId, key)
-  if not P.CanEdit() or not userId or userId == "" then return false end
+  if not P.CanEdit("raids") or not userId or userId == "" then return false end
   local g = G()
   local cur = g.rhLinks[userId]
   local l = { key = key or "", ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1), by = ns.MyKey() }
@@ -94,7 +94,7 @@ end
 ns.CommHandlers.h = function(sender, payload)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" then return end
-  if not ns.OfficerSent(sender, f[5]) then return end
+  if not ns.OfficerSent(sender, f[5], "raids") then return end
   local g = G()
   if not g then return end
   local ts = Enc.FromB36(f[4]) or 0
@@ -169,14 +169,14 @@ end
 
 -- create a one-off raid night for the event (officers)
 function RH.CreateNight(ev)
-  if not P.CanEdit() or RH.Unrealistic(ev) then return nil end
+  if not P.CanEdit("raids") or RH.Unrealistic(ev) then return nil end
   local saved = ns.Events.Save({ title = ev.title, raid = "Other", duration = ev.minutes, weekly = false, anchors = { ev.start } })
   return RH.FindNight(ev), saved
 end
 
 -- write the matched sign-ups onto a raid night; returns imported, skipped (newer in-game answer), unmatched
 function RH.Import(ev, occ)
-  if not P.CanEdit() or not occ then return 0, 0, 0 end
+  if not P.CanEdit("raids") or not occ then return 0, 0, 0 end
   local g = ns.GuildDB()
   g.signups[occ.id] = g.signups[occ.id] or {}
   local list = g.signups[occ.id]

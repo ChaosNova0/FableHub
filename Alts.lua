@@ -119,7 +119,7 @@ end
 -- Officer edits
 ------------------------------------------------------------------------
 local function Officer(char, main)
-  if not P.CanEdit() then return false end
+  if not P.CanEdit("alts") then return false end
   local cur = All()[char]
   local e = { main = main, ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1), by = ns.MyKey(), manual = true }
   All()[char] = e
@@ -129,7 +129,7 @@ end
 
 -- link char (and anyone linked to it) under main
 function A.Link(char, main)
-  if not P.CanEdit() or not char or not main or char == main then return false end
+  if not P.CanEdit("alts") or not char or not main or char == main then return false end
   main = A.MainOf(main)
   if main == char then return false end
   if A.MainOf(main) ~= main or not All()[main] then Officer(main, main) end
@@ -142,7 +142,7 @@ end
 
 -- take one character out of its group
 function A.Unlink(char)
-  if not P.CanEdit() or A.MainOf(char) == char then return false end
+  if not P.CanEdit("alts") or A.MainOf(char) == char then return false end
   Officer(char, char)
   ns.Fire("ALTS_CHANGED")
   return true
@@ -150,7 +150,7 @@ end
 
 -- make char the main of its group
 function A.MakeMain(char)
-  if not P.CanEdit() then return false end
+  if not P.CanEdit("alts") then return false end
   for _, key in ipairs(A.GroupOf(char)) do Officer(key, char) end
   ns.Fire("ALTS_CHANGED")
   return true
@@ -209,7 +209,7 @@ ns.CommHandlers.X = function(sender, payload)
   -- guild members only (no made-up characters piling up in saved data)
   if next(ns.roster) and not (ns.roster[char] and ns.roster[e.main]) then return end
   if e.manual then
-    if not ns.OfficerSent(sender, e.by) then return end -- officer links: officers only
+    if not ns.OfficerSent(sender, e.by, "alts") then return end -- officer links: officers only
   elseif All()[char] and not ns.FirstHand(sender, e.by) then
     return -- copies passed on by other members only fill gaps
   end

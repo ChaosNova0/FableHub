@@ -507,7 +507,7 @@ local function ShowPanel(id)
   current = id
   if main and main.PaintCog then main.PaintCog(false) end
   SafeRefresh(panels[id])
-  if FableHubDB and id ~= "settings" then FableHubDB.settings.lastTab = id end
+  if FableHubDB and id ~= "settings" and id ~= "permissions" then FableHubDB.settings.lastTab = id end
 end
 
 UI.ShowPanel = function(id) if main then ShowPanel(id) end end
@@ -572,7 +572,7 @@ local function Build()
   cogTex:SetAllPoints()
   cogTex:SetTexture("Interface\\Buttons\\UI-OptionsButton")
   local function PaintCog(hover)
-    if current == "settings" or hover then
+    if current == "settings" or current == "permissions" or hover then
       local r, g, b = T.Accent()
       cogTex:SetVertexColor(r, g, b, 1)
     else
@@ -587,7 +587,7 @@ local function Build()
   end)
   cog:SetScript("OnLeave", function() PaintCog(false); GameTooltip:Hide() end)
   cog:SetScript("OnClick", function()
-    if current == "settings" then
+    if current == "settings" or current == "permissions" then
       ShowPanel(UI.beforeSettings and panels[UI.beforeSettings] and UI.beforeSettings or "home")
     else
       UI.beforeSettings = current

@@ -129,7 +129,7 @@ end
 local function Allowed(old, new, actor)
   if not actor or actor == "" then return false end
   if not old then return actor == new.by and new.status == "open" end -- only the requester posts
-  if P.IsOfficer(actor) then return true end
+  if P.IsOfficer(actor, "crafts") then return true end
   if actor == old.by then return true end -- requester: edit, cancel, mark done, un-claim
   if actor == new.claimer and old.status == "open" and (new.status == "claimed" or new.status == "done") then return true end
   if old.claimer == actor then return new.status == "open" or new.status == "done" or new.status == "claimed" end
@@ -261,7 +261,7 @@ ns.CommHandlers.N = function(sender, payload)
   end
   if not old and r.status ~= "open" then
     -- we missed the earlier steps; trust it if the actor is part of the request or an officer
-    if actor == r.by or actor == r.claimer or P.IsOfficer(actor) then
+    if actor == r.by or actor == r.claimer or P.IsOfficer(actor, "crafts") then
       all[r.id] = r
       ns.Fire("REQUESTS_CHANGED")
     end
