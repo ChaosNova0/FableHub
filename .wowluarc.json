@@ -1,0 +1,8 @@
+{
+  "ignore": ["Libs/", "tests/"],
+  "flavors": ["forever"],
+  "globals": {
+    "read": ["FABLEHUB_TEST_EPOCH"],
+    "write": ["FableHub"]
+  }
+}
