@@ -342,7 +342,10 @@ function ns.ResolveSender(sender)
       found = key
     end
   end
-  if found == nil then
+  -- Only when the name arrived without a last name: a full "First Lastname"
+  -- that isn't in the roster is someone else (otherwise any player sharing a
+  -- guildmate's first name could whisper as them)
+  if found == nil and not full:find(" ", 1, true) then
     -- only a first name: a unique first-name match on the same realm
     local first, realm = FirstName(sender), RealmOf(sender)
     for key in pairs(ns.roster) do
@@ -408,6 +411,7 @@ function ns.RegisterDigest(fn) digests[#digests + 1] = fn end
 ------------------------------------------------------------------------
 -- Receiving
 ------------------------------------------------------------------------
+local helloAnswered = {}    -- [key] = GetTime() when we last replied to their hello
 local wantedRecently = {}   -- [key] = GetTime() when we decided to ask for it
 local wantSeen = {}         -- [key] = GetTime() when someone else asked for it
 local answeredWant = 0
@@ -473,7 +477,10 @@ local function HandleHello(sender, payload, isReply)
     end
   end
 
-  if not isReply then
+  -- answer each member's hello at most once a minute, so a repeated hello
+  -- can't make every FableHub user in the guild reply each time
+  if not isReply and GetTime() - (helloAnswered[sender] or -math.huge) > 60 then
+    helloAnswered[sender] = GetTime()
     C_Timer.After(1 + math.random() * 4, function() ns.Send("R", HelloPayload()) end)
   end
   ns.Fire("DATA_CHANGED")
@@ -489,6 +496,24 @@ local function HandleWant(sender, key)
     end
   end
 end
+
+-- someone sent a newer "copy" of our own record than we have (a forgery, or
+-- stale data from another client): make ours newer and send it again, so the
+-- real one wins everywhere
+-- (defined before HandleDigest, which calls it)
+local reasserting = false
+local function ReassertMine(theirTs)
+  local mine = ns.MyRecord()
+  if not mine or reasserting then return end
+  if (mine.ts or 0) <= theirTs then mine.ts = theirTs + 1 end
+  reasserting = true
+  C_Timer.After(3, function()
+    reasserting = false
+    ns.MirrorMyRecord()
+    ns.BroadcastRecord(ns.MyRecord())
+  end)
+end
+ns.ReassertMine = ReassertMine
 
 local function HandleDigest(sender, payload)
   local theirs = Enc.DecodeDigest(payload)
@@ -511,29 +536,17 @@ local function HandleDigest(sender, payload)
   ns.Debug(("relayed %d records to %s"):format(sent, sender))
 end
 
--- someone sent a newer "copy" of our own record than we have (a forgery, or
--- stale data from another client): make ours newer and send it again, so the
--- real one wins everywhere
-local reasserting = false
-local function ReassertMine(theirTs)
-  local mine = ns.MyRecord()
-  if not mine or reasserting then return end
-  if (mine.ts or 0) <= theirTs then mine.ts = theirTs + 1 end
-  reasserting = true
-  C_Timer.After(3, function()
-    reasserting = false
-    ns.MirrorMyRecord()
-    ns.BroadcastRecord(ns.MyRecord())
-  end)
-end
-ns.ReassertMine = ReassertMine
-
 local function HandleFull(sender, payload)
   local rec = Enc.DecodeRecord(payload)
   if not rec or not ns.TimeOK(rec.ts) then return end
   if rec.key == ns.MyKey() then
     local mine = ns.MyRecord()
-    if mine and rec.ts >= (mine.ts or 0) then ReassertMine(rec.ts) end
+    -- a newer copy, or one with our timestamp but different contents, gets
+    -- corrected; an exact copy (someone relaying ours) is left alone
+    if mine and (rec.ts > (mine.ts or 0)
+        or (rec.ts == (mine.ts or 0) and Enc.EncodeRecord(rec) ~= Enc.EncodeRecord(mine))) then
+      ReassertMine(rec.ts)
+    end
     return
   end
   -- only guild members (stops made-up members piling up in everyone's saved data)
@@ -629,6 +642,8 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
     buf = { total = total, parts = {}, got = 0, t = GetTime(), msgType = msgType }
     buffers[bkey] = buf
   end
+  -- every part must agree on the total, or the message could complete with a gap
+  if total ~= buf.total then return end
   if not buf.parts[part] then
     buf.parts[part] = payload
     buf.got = buf.got + 1

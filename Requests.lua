@@ -247,6 +247,8 @@ local baseHandler = ns.CommHandlers.N
 ns.CommHandlers.N = function(sender, payload)
   local r, actor = Decode(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
+  -- requesters must be guild members, so made-up names can't get round MAX_OPEN
+  if next(ns.roster) and not ns.roster[r.by] then return end
   local all = R.All()
   local old = all[r.id]
   if Stale(r) then return end

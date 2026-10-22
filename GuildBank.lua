@@ -621,6 +621,8 @@ local MAX_OPEN = 10 -- open bank requests per member, so nobody can flood the of
 ns.CommHandlers.q = function(sender, payload)
   local r = DecodeReq(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
+  -- requesters must be guild members, so made-up names can't get round MAX_OPEN
+  if next(ns.roster) and not ns.roster[r.by] then return end
   local b = G()
   local old = b and b.requests[r.id]
   if not old then
