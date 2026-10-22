@@ -110,7 +110,7 @@ function A.SendDigest()
 end
 
 ns.CommHandlers.J = function(sender, payload)
-  if not ns.AmOfficerRelayFor(sender) then return end -- officer data: officers pass it on
+  if not ns.AmOfficerRelayFor(sender, "announce") then return end -- officer data: officers pass it on
   local f = Enc.Split(payload, "^")
   local theirs = Enc.FromB36(f[2])
   local theirN = tonumber(f[3])

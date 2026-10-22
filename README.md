@@ -110,8 +110,8 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 ## How sharing works
 
 - **Each player shares only their own characters** (level, professions, recipes, talents, alts). Everyone stores what they hear, so offline members still show.
-- **Catch-up:** when someone logs in, the online member with the newest FableHub sends them what they missed. Officer data (raid nights, loot, announcements, raid plans, attendance) is passed on by an online officer.
-- **Messages** are split into parts, throttled, and paused during combat and boss fights.
+- **Catch-up:** when someone logs in, the online member with the newest FableHub sends them what they missed. A newer version only counts once an officer or two members run it. Officer data (raid nights, loot, announcements, raid plans, attendance) is passed on by an online officer allowed to use that feature.
+- **Messages** are split into parts, throttled, and paused during combat and boss fights. A copy of something already waiting to be sent is skipped, and while a lot is waiting, catch-up answers wait their turn.
 - **Connected realms:** Forever drops guild addon messages from characters on a connected realm. FableHub notices when its own messages don't come back and whispers other FableHub users instead. Characters are stored under the guild's home realm, so every client agrees on names.
 - **Updates:** when an officer, or at least two guildmates, run a newer version, everyone else gets a chat message and a note in the sidebar.
 
@@ -119,10 +119,10 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 
 Every guildmate's FableHub checks what it receives, so these rules don't depend on hiding buttons:
 
-- **Officer data** is accepted only when its author's rank may use that feature (officer ranks, or the Guild Master's feature permissions), and only straight from that author or passed on by an officer.
-- **Members' own data** (sign-ups, requests, bank reads) can only be changed by that member or an officer. Copies passed on by others only fill gaps.
+- **Officer data** is accepted only when its author's rank may use that feature (officer ranks, or the Guild Master's feature permissions), and only straight from that author or passed on by someone allowed to use that feature.
+- **Members' own data** (sign-ups, requests, bank reads, alt links) can only be changed by that member or an officer. Copies passed on by others only fill gaps, and sign-ups and alt links only from the member answering your catch-up. A link an officer set by hand stays until an officer changes it.
 - **Self-correcting:** if anyone sends a newer copy of *your* record, sign-up or alt links than yours, your FableHub re-sends the real one so it wins everywhere.
-- **Limits:** size limits per message type, a few half-received messages per sender, catch-up requests answered at most every 20 seconds per member, text fields cut to their normal length, at most 10 open craft and 10 open bank requests per member, and nothing dated more than five minutes ahead.
+- **Limits:** size limits per message type, a few half-received messages per sender, catch-up requests answered at most every 20 seconds per member, hellos answered at most 3 times in 5 minutes per member, text fields cut to their normal length, at most 10 open craft and 10 open bank requests per member, and nothing dated more than five minutes ahead.
 - **Other safeguards:** addon whispers from outside the guild are ignored and WoW formatting codes are stripped from everything received. Restricted bank tabs are only whispered to ranks allowed to see them.
 - **No internet:** addons can't reach it. The Raid-Helper and That's My BIS imports work by pasting their export text.
 

@@ -30,6 +30,14 @@ local CHUNK = MAX_MSG - HEADER_ROOM
 
 ns.present = {}          -- [key] = version, FableHub users heard from this session
 local sendQueue = {}
+-- Duplicate control. Catch-up answers often queue the same data again (several
+-- members logging in at once, all missing the same records): an exact copy of
+-- a message still waiting to go out is skipped, and a newer broadcast of a
+-- character record replaces an older one still waiting.
+local waitingSig = {}    -- [message signature] = true until its first part is sent
+local waitingRecord = {} -- [character key] = message id of a record broadcast not started yet
+local startedIds = {}    -- [message id] = true once its first part has gone out
+local newerSeen = {}     -- [version] = { [key] = true }, versions above ours (see NoteVersion)
 local buffers = {}       -- partial multi-part messages
 local nextId = math.random(0, 1295)
 local started = false
@@ -69,6 +77,17 @@ local function SendRaw(msg, target, prefix)
   return "drop"
 end
 
+-- an item leaves the queue (sent or given up on): its message is no longer "waiting"
+local function Dequeue()
+  local item = table.remove(sendQueue, 1)
+  if item.part == 1 then
+    startedIds[item.id] = true
+    if item.sig then waitingSig[item.sig] = nil end
+    if item.recKey and waitingRecord[item.recKey] == item.id then waitingRecord[item.recKey] = nil end
+  end
+  if item.part == item.total then startedIds[item.id] = nil end
+end
+
 local function Pump()
   if #sendQueue == 0 or not IsInGuild() or Paused() then return end
   local now = GetTime()
@@ -85,11 +104,11 @@ local function Pump()
     end
     if result == "retry" then
       item.tries = (item.tries or 0) + 1
-      if item.tries > 10 then table.remove(sendQueue, 1) end
+      if item.tries > 10 then Dequeue() end
       tokens = 0
       return
     end
-    table.remove(sendQueue, 1)
+    Dequeue()
     tokens = tokens - 1
   end
 end
@@ -120,19 +139,39 @@ local function WhisperPeers(everyone)
 end
 ns.WhisperPeers = WhisperPeers
 
-function Queue(msgType, payload, target, prefix, form)
+-- remove the waiting (unstarted) parts of message `id`
+local function Unqueue(id)
+  if startedIds[id] then return false end
+  for i = #sendQueue, 1, -1 do
+    if sendQueue[i].id == id then
+      local item = table.remove(sendQueue, i)
+      if item.sig then waitingSig[item.sig] = nil end
+    end
+  end
+  return true
+end
+
+-- recKey: a character record broadcast, which replaces an older one still waiting
+function Queue(msgType, payload, target, prefix, form, recKey)
   payload = payload or ""
   if not target and ns.guildMuted and not prefix then
-    for _, key in ipairs(WhisperPeers(msgType == "H")) do Queue(msgType, payload, key) end
+    for _, key in ipairs(WhisperPeers(msgType == "H")) do Queue(msgType, payload, key, nil, nil, recKey) end
     return
   end
+  local sig = table.concat({ msgType, target or "", prefix or "", form or "", payload }, "\1")
+  if waitingSig[sig] then return end -- the exact same message is already waiting
+  local recSlot = recKey and ((target or "") .. "\1" .. recKey)
+  if recSlot and waitingRecord[recSlot] then Unqueue(waitingRecord[recSlot]) end
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
   for i = 1, total do
     local part = payload:sub((i - 1) * CHUNK + 1, i * CHUNK)
     table.insert(sendQueue, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target, prefix = prefix,
-                              form = form })
+                              form = form, id = id, part = i, total = total,
+                              sig = i == 1 and sig or nil, recKey = i == 1 and recSlot or nil })
   end
+  waitingSig[sig] = true
+  if recSlot then waitingRecord[recSlot] = id end
 end
 
 -- to the whole guild
@@ -264,7 +303,7 @@ function HelloPayload()
 end
 
 function ns.BroadcastRecord(rec)
-  if rec then ns.Send("F", Enc.EncodeRecord(rec)) end
+  if rec then Queue("F", Enc.EncodeRecord(rec), nil, nil, nil, rec.key) end
 end
 
 -- Debounced broadcast of our own record after it changes.
@@ -301,16 +340,48 @@ local function VersionNumber(v)
 end
 ns.VersionNumber = VersionNumber
 
+-- Versions are self-reported. One newer than ours only counts once an officer,
+-- or at least two members, run it, so one member claiming "999.0" can't make
+-- themselves the only one who answers catch-up (and then not answer).
+local function VersionConfirmed(ver)
+  local seen = newerSeen[ver]
+  if not seen then return false end
+  local n = 0
+  for k in pairs(seen) do
+    n = n + 1
+    if ns.RealOfficer and ns.RealOfficer(k) then return true end
+  end
+  return n >= 2
+end
+
+local function TrustedVersion(key)
+  local mine = VersionNumber(ns.VERSION)
+  if key == ns.MyKey() then return mine end
+  local ver = ns.present[key]
+  local v = VersionNumber(ver)
+  if v > mine and not VersionConfirmed(ver) then return mine end
+  return v
+end
+
+-- the relay among online FableHub users passing `eligible`, not counting `requester`
+local function BestRelay(requester, eligible)
+  local me = ns.MyKey()
+  local best, bestV
+  local function consider(key)
+    if eligible and not eligible(key) then return end
+    local v = TrustedVersion(key)
+    if not best or v > bestV or (v == bestV and key < best) then best, bestV = key, v end
+  end
+  if me and me ~= requester then consider(me) end
+  for key in pairs(ns.present) do
+    if key ~= requester and key ~= me and ns.IsOnline(key) then consider(key) end
+  end
+  return best
+end
+
 local function AmRelayFor(requester)
   local me = ns.MyKey()
-  local best, bestV = me, VersionNumber(ns.VERSION)
-  for key, ver in pairs(ns.present) do
-    if key ~= requester and key ~= me and ns.IsOnline(key) then
-      local v = VersionNumber(ver)
-      if v > bestV or (v == bestV and key < best) then best, bestV = key, v end
-    end
-  end
-  return best == me
+  return me ~= nil and BestRelay(requester) == me
 end
 ns.AmRelayFor = AmRelayFor
 
@@ -363,18 +434,20 @@ end
 -- officer-only data: the author must be an officer (with `feature`: allowed to
 -- use that feature, see Plans.lua), and it must come from the author or be
 -- passed on by an officer or someone with that feature (members can't pass it on)
+-- (with a feature, whoever passes it on must be allowed to use that feature
+-- too: an officer the Guild Master took a feature away from can't pass on that
+-- feature's data under someone else's name)
 function ns.OfficerSent(sender, author, feature)
   local P = ns.Plans
   if not author or author == "" or not P.IsOfficer(author, feature) then return false end
-  return sender == author or P.IsOfficer(sender) or (feature ~= nil and P.IsOfficer(sender, feature))
+  return sender == author or P.IsOfficer(sender, feature)
 end
 
 -- a change made by `actor` that arrived from `sender`: did it come first-hand
 -- (or from an officer / someone with `feature`)? Second-hand copies from
 -- members only fill gaps.
 function ns.FirstHand(sender, actor, feature)
-  local P = ns.Plans
-  return sender == actor or P.IsOfficer(sender) or (feature ~= nil and P.IsOfficer(sender, feature))
+  return sender == actor or ns.Plans.IsOfficer(sender, feature)
 end
 
 -- timestamps more than 5 minutes ahead of the server clock are refused, so a
@@ -391,17 +464,32 @@ local function RealOfficer(key)
   return idx ~= nil and idx <= P.OfficerRank()
 end
 ns.RealOfficer = RealOfficer
-function ns.AmOfficerRelayFor(requester)
+
+-- allowed `feature` by real guild rank (an officer, without a feature)
+local function RealAllowed(key, feature)
+  if feature == nil then return RealOfficer(key) end
+  local idx = ns.Plans.RankIndex(key)
+  return idx ~= nil and ns.Plans.RankAllowed(feature, idx)
+end
+
+-- With a feature, the relay is chosen among members allowed that feature, so
+-- the copies it passes on are accepted by OfficerSent.
+function ns.AmOfficerRelayFor(requester, feature)
   local me = ns.MyKey()
-  if not RealOfficer(me) then return false end
-  local best, bestV = me, VersionNumber(ns.VERSION)
-  for key, ver in pairs(ns.present) do
-    if key ~= requester and key ~= me and ns.IsOnline(key) and RealOfficer(key) then
-      local v = VersionNumber(ver)
-      if v > bestV or (v == bestV and key < best) then best, bestV = key, v end
-    end
-  end
-  return best == me
+  if not me or not RealAllowed(me, feature) then return false end
+  return BestRelay(requester, function(key) return RealAllowed(key, feature) end) == me
+end
+
+-- Is `sender` the member who answers our catch-up (or the next in line, in
+-- case our view of who's online differs a little from theirs)? Second-hand
+-- copies of other people's data that aren't from an officer are only taken
+-- from them. nil = we haven't heard their hello yet, so we can't tell.
+function ns.IsMyRelay(sender)
+  if not ns.present[sender] then return nil end
+  local me = ns.MyKey()
+  local first = BestRelay(me)
+  if sender == first then return true end
+  return BestRelay(me, function(key) return key ~= first end) == sender
 end
 
 -- catch-up digests other modules send at startup and on /fhub sync
@@ -419,7 +507,7 @@ local answeredWant = 0
 -- Newer FableHub versions seen in the guild. Told once per version, and only
 -- when an officer or at least two members run it (so one player claiming a
 -- made-up version can't nag everyone).
-local newerSeen, toldNewer = {}, {}
+local toldNewer = {}
 local function NoteVersion(key, ver)
   if not key or not ver or not ver:match("^%d+%.%d+") then return end
   if VersionNumber(ver) <= VersionNumber(ns.VERSION) then return end
@@ -477,11 +565,16 @@ local function HandleHello(sender, payload, isReply)
     end
   end
 
-  -- answer each member's hello at most once a minute, so a repeated hello
-  -- can't make every FableHub user in the guild reply each time
-  if not isReply and GetTime() - (helloAnswered[sender] or -math.huge) > 60 then
-    helloAnswered[sender] = GetTime()
-    C_Timer.After(1 + math.random() * 4, function() ns.Send("R", HelloPayload()) end)
+  -- answer each member's hello at most 3 times in 5 minutes: enough for a
+  -- /reload or two (a reloaded client needs our reply to know we're here),
+  -- but a repeated hello can't make every FableHub user reply every time
+  if not isReply then
+    local now, a = GetTime(), helloAnswered[sender]
+    if not a or now - a.t > 300 then a = { t = now, n = 0 }; helloAnswered[sender] = a end
+    if a.n < 3 then
+      a.n = a.n + 1
+      C_Timer.After(1 + math.random() * 4, function() ns.Send("R", HelloPayload()) end)
+    end
   end
   ns.Fire("DATA_CHANGED")
 end
@@ -569,8 +662,25 @@ local DIGESTS = { D = true, Y = true, K = true, G = true, J = true, U = true, Q 
 local DIGEST_GAP = 20
 local lastDigest = {}
 
-local function Dispatch(sender, msgType, payload)
-  if DIGESTS[msgType] then
+-- While a lot is already waiting to go out (about 3 minutes' worth), catch-up
+-- answers wait their turn instead of piling on more: at launch everyone's data
+-- starts empty, and the answers to one login usually cover the next one too.
+local BUSY_QUEUE = 200
+local MAX_WAITS = 10 -- 30 s apart: after 5 minutes, answer anyway
+
+local Dispatch
+local function AnswerCatchUp(sender, msgType, payload, waits)
+  if #sendQueue > BUSY_QUEUE and waits < MAX_WAITS then
+    C_Timer.After(30, function()
+      if ns.IsOnline(sender) then AnswerCatchUp(sender, msgType, payload, waits + 1) end
+    end)
+    return
+  end
+  Dispatch(sender, msgType, payload, true)
+end
+
+function Dispatch(sender, msgType, payload, answering)
+  if DIGESTS[msgType] and not answering then
     local k = sender .. "#" .. msgType
     local now = GetTime()
     if lastDigest[k] and now - lastDigest[k] < DIGEST_GAP then
@@ -578,6 +688,7 @@ local function Dispatch(sender, msgType, payload)
       return
     end
     lastDigest[k] = now
+    return AnswerCatchUp(sender, msgType, payload, 0)
   end
   if msgType == "H" then HandleHello(sender, payload, false)
   elseif msgType == "R" then HandleHello(sender, payload, true)

@@ -329,7 +329,7 @@ ns.CommHandlers.V = function(sender, payload)
   ns.Fire("EVENTS_CHANGED")
 end
 
-ns.CommHandlers.S = function(sender, payload)
+local function HandleSignup(sender, payload, retried)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
   local occId, signer, ts, status = f[2], f[3], Enc.FromB36(f[4]), f[5]
@@ -356,8 +356,18 @@ ns.CommHandlers.S = function(sender, payload)
   local cur = g.signups[occId][signer]
   if cur and (cur.ts or 0) >= ts then return end
   -- only the player themselves or an officer can change a sign-up; copies passed
-  -- on by other members (catch-up) only fill in sign-ups we don't have yet
-  if cur and not ns.FirstHand(sender, signer, "raids") then return end
+  -- on by other members (catch-up) only fill in sign-ups we don't have yet, and
+  -- only from the member answering our catch-up (so nobody can answer for
+  -- everyone who hasn't signed up)
+  if not ns.FirstHand(sender, signer, "raids") then
+    if cur then return end
+    local relay = ns.IsMyRelay(sender)
+    if relay == nil and not retried then -- their hello hasn't reached us yet
+      C_Timer.After(10, function() HandleSignup(sender, payload, true) end)
+      return
+    end
+    if not relay then return end
+  end
   local role = f[7]
   if role == "" or not ns.ROLE_NAMES[role] then role = nil end
   local char = (f[6] ~= "" and f[6] or signer):sub(1, 64)
@@ -365,6 +375,7 @@ ns.CommHandlers.S = function(sender, payload)
                                src = (f[9] and f[9] ~= "") and f[9]:sub(1, 70) or nil }
   ns.Fire("EVENTS_CHANGED")
 end
+ns.CommHandlers.S = function(sender, payload) HandleSignup(sender, payload, false) end
 
 ns.CommHandlers.A = function(sender, payload)
   local f = Enc.Split(payload, "^")
@@ -415,7 +426,7 @@ end
 ns.CommHandlers.Y = function(sender, payload)
   -- sign-ups come from the usual relay; raid nights and attendance (officer
   -- data) only from an officer, since others won't accept them from members
-  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender, "raids")
   if not member and not officer then return end
   local g = G()
   if not g then return end

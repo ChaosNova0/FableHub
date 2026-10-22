@@ -643,8 +643,12 @@ function B.SendDigest()
   local b = G()
   if not b then return end
   local parts = { "m=" .. Enc.ToB36(b.money and b.money.ts or 0), "p=" .. Enc.ToB36(b.perm and b.perm.ts or 0) }
+  -- count only requests catch-up passes on (not finished ones), so the counts can match
   local maxTs, n = 0, 0
-  for _, r in pairs(b.requests) do n = n + 1; if (r.ts or 0) > maxTs then maxTs = r.ts end end
+  for _, r in pairs(b.requests) do
+    if not Finished(r) then n = n + 1 end
+    if (r.ts or 0) > maxTs then maxTs = r.ts end
+  end
   parts[#parts + 1] = "q=" .. Enc.ToB36(maxTs) .. "." .. n
   for tab, t in pairs(b.tabs) do parts[#parts + 1] = "t" .. tab .. "=" .. Enc.ToB36(t.ts or 0) end
   for tab, l in pairs(b.logs) do parts[#parts + 1] = "l" .. tab .. "=" .. Enc.ToB36(l.ts or 0) end
@@ -677,7 +681,7 @@ local function HandleDigest(sender, payload, retried)
   local qTs, qN = (theirs.q or ""):match("^(%w+)%.(%d+)$")
   qTs, qN = Enc.FromB36(qTs), tonumber(qN) or 0
   local n = 0
-  for _ in pairs(b.requests) do n = n + 1 end
+  for _, r in pairs(b.requests) do if not Finished(r) then n = n + 1 end end
   for _, r in pairs(b.requests) do
     if (qN < n or (r.ts or 0) > qTs) and not Finished(r) then ns.SendTo(sender, "q", EncodeReq(r)) end
   end

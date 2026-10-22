@@ -99,11 +99,22 @@ function A.Publish()
     g.myAltsSig = sig
     g.myAltsTs = math.max(ns.Now(), (g.myAltsTs or 0) + 1)
   end
+  -- the character we're on goes first: other clients only take a link from us
+  -- once they know which group we're in (see the X handler)
+  local me = ns.MyKey()
+  table.sort(chars, function(a, b)
+    if (a == me) ~= (b == me) then return a == me end
+    return a < b
+  end)
   local changed = false
   for _, key in ipairs(chars) do
-    local e = { main = main, ts = g.myAltsTs, by = ns.MyKey() }
-    if Store(key, e) then changed = true end
-    ns.Send("X", Encode(key, All()[key]))
+    local cur = All()[key]
+    -- an officer's link stays until an officer changes it
+    if not (cur and cur.manual) then
+      local e = { main = main, ts = g.myAltsTs, by = me }
+      if Store(key, e) then changed = true end
+      ns.Send("X", Encode(key, All()[key]))
+    end
   end
   if changed then ns.Fire("ALTS_CHANGED") end
 end
@@ -203,7 +214,15 @@ end
 ------------------------------------------------------------------------
 -- Sync
 ------------------------------------------------------------------------
-ns.CommHandlers.X = function(sender, payload)
+-- a player's own link must put the character publishing it in that group:
+-- it's the character itself or the main, or the publisher is already
+-- known to be in the same group (so nobody can file someone else under a
+-- main they have nothing to do with)
+local function InGroup(by, char, main)
+  return by == char or by == main or A.MainOf(by) == main
+end
+
+local function HandleLink(sender, payload, retried)
   local char, e = Decode(payload)
   if not char or not ns.TimeOK(e.ts) then return end
   -- guild members only (no made-up characters piling up in saved data)
@@ -221,12 +240,26 @@ ns.CommHandlers.X = function(sender, payload)
       C_Timer.After(2, A.Publish)
       return
     end
-    if All()[char] and not ns.FirstHand(sender, e.by) then
-      return -- copies passed on by other members only fill gaps
+    local cur = All()[char]
+    -- an officer's link stays until an officer changes it
+    if cur and cur.manual then return end
+    if sender == e.by then
+      if not InGroup(e.by, char, e.main) then return end
+    elseif not ns.FirstHand(sender, e.by) then
+      -- copies passed on by other members only fill gaps, and only from the
+      -- member answering our catch-up
+      if cur then return end
+      local relay = ns.IsMyRelay(sender)
+      if relay == nil and not retried then -- their hello hasn't reached us yet
+        C_Timer.After(10, function() HandleLink(sender, payload, true) end)
+        return
+      end
+      if not relay then return end
     end
   end
   if Store(char, e) then ns.Fire("ALTS_CHANGED") end
 end
+ns.CommHandlers.X = function(sender, payload) HandleLink(sender, payload, false) end
 
 function A.SendDigest()
   local maxTs, n = 0, 0
@@ -240,7 +273,7 @@ end
 ns.CommHandlers.G = function(sender, payload)
   -- members' own links come from the usual relay; links an officer set by
   -- hand only from an officer (others won't accept them from a member)
-  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender, "alts")
   if not member and not officer then return end
   local f = Enc.Split(payload, "^")
   local theirs, theirN = Enc.FromB36(f[2]) or 0, Enc.FromB36(f[3]) or 0

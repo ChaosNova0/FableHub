@@ -608,6 +608,8 @@ end
 ------------------------------------------------------------------------
 -- Catch-up sync
 ------------------------------------------------------------------------
+L.SYNC_DAYS = 180 -- loot history older than this isn't passed on in catch-up
+
 function L.SendDigest()
   local g = G()
   if not g then return end
@@ -616,8 +618,11 @@ function L.SendDigest()
   for _ in pairs(g.seen) do seenCount = seenCount + 1 end
   local manualTs = 0
   for _, list in pairs(Manual()) do for _, m in pairs(list) do if (m.ts or 0) > manualTs then manualTs = m.ts end end end
+  -- count only what catch-up passes on (the last 180 days), or the counts
+  -- could never match and every digest would re-send the whole history
   local lootN, manualN = 0, 0
-  for _ in pairs(g.loot) do lootN = lootN + 1 end
+  local cutoff = ns.Now() - L.SYNC_DAYS * 86400
+  for _, e in pairs(g.loot) do if (e.at or 0) > cutoff then lootN = lootN + 1 end end
   for _, list in pairs(Manual()) do for _ in pairs(list) do manualN = manualN + 1 end end
   ns.Send("K", table.concat({ "1", Enc.ToB36(g.tmb and g.tmb.ts or 0), Enc.ToB36(maxTs), tostring(seenCount),
     Enc.ToB36(manualTs), tostring(lootN), tostring(manualN) }, "^"))
@@ -626,7 +631,7 @@ end
 ns.CommHandlers.K = function(sender, payload)
   -- loot data is officer-only, so an officer passes it on; the shared list of
   -- items seen dropping comes from the usual relay
-  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender)
+  local member, officer = ns.AmRelayFor(sender), ns.AmOfficerRelayFor(sender, "loot")
   if not member and not officer then return end
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
@@ -636,12 +641,12 @@ ns.CommHandlers.K = function(sender, payload)
   if officer and g.tmb and (g.tmb.ts or 0) > tmbTs then L.ShareTMB() end
   -- counts (sent by 0.13.7+): if they have fewer entries than us, they missed older ones
   local theirLootN, theirManualN = tonumber(f[6]), tonumber(f[7])
+  local cutoff = ns.Now() - L.SYNC_DAYS * 86400
   local myLootN, myManualN = 0, 0
-  for _ in pairs(g.loot) do myLootN = myLootN + 1 end
+  for _, e in pairs(g.loot) do if (e.at or 0) > cutoff then myLootN = myLootN + 1 end end
   for _, list in pairs(Manual()) do for _ in pairs(list) do myManualN = myManualN + 1 end end
   local allLoot = theirLootN and theirLootN < myLootN
   local allManual = theirManualN and theirManualN < myManualN
-  local cutoff = ns.Now() - 180 * 86400
   for _, e in pairs(g.loot) do
     if officer and (allLoot or (e.ts or 0) > lootTs) and (e.at or 0) > cutoff then ns.Send("L", EncodeEntry(e)) end
   end

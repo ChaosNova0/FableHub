@@ -543,15 +543,19 @@ ns.CommHandlers.c = function(sender, payload)
 end
 
 ns.CommHandlers.Q = function(sender, payload)
-  if not ns.AmOfficerRelayFor(sender) then return end -- plans are officer data
+  -- officer data: the Guild Master's settings go out from an officer relay,
+  -- shared plans from a relay allowed to use plans (others won't accept them)
+  local officer, planner = ns.AmOfficerRelayFor(sender), ns.AmOfficerRelayFor(sender, "plans")
+  if not officer and not planner then return end
   local theirs = {}
   for _, item in ipairs(Enc.Split(payload, ",")) do
     local id, ts = item:match("^(.-)=(%w+)$")
     if id then theirs[id] = Enc.FromB36(ts) end
   end
   local g = ns.GuildDB()
-  if g and (g.officerRankTs or 0) > (theirs["!cfg"] or 0) then P.SendConfig() end
-  if g and (g.permsTs or 0) > (theirs["!perm"] or 0) then P.SendPerms() end
+  if officer and g and (g.officerRankTs or 0) > (theirs["!cfg"] or 0) then P.SendConfig() end
+  if officer and g and (g.permsTs or 0) > (theirs["!perm"] or 0) then P.SendPerms() end
+  if not planner then return end
   for id, plan in pairs(P.All()) do
     if plan.shared and (theirs[id] or 0) < (plan.ts or 0) then ns.Send("P", P.Encode(plan)) end
   end
