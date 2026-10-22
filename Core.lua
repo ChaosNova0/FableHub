@@ -9,9 +9,9 @@ ns.PROTOCOL = 1
 -- to a new message channel so clients still on older versions can't send
 -- beta data into the new guild. Settings are kept.
 ns.DATA_EPOCH = 2 -- 1 = Forever beta, 2 = launch (Nov 4, 2026)
-if FABLEHUB_TEST_EPOCH then ns.DATA_EPOCH = FABLEHUB_TEST_EPOCH end -- test suite only
-
-FableHub = ns -- global handle, handy for /dump FableHub while testing
+-- Test suite only: the real client always defines WOW_PROJECT_ID, so in game
+-- nothing can change the data era from outside FableHub
+if FABLEHUB_TEST_EPOCH and not WOW_PROJECT_ID then ns.DATA_EPOCH = FABLEHUB_TEST_EPOCH end
 
 ------------------------------------------------------------------------
 -- Small callback bus so the UI can react to data changes
@@ -61,8 +61,9 @@ end
 function ns.Print(msg)
   DEFAULT_CHAT_FRAME:AddMessage("|cff8fd3ffFableHub|r: " .. tostring(msg))
 end
+-- debug messages only ever show on the developer's account
 function ns.Debug(msg)
-  if FableHubDB and FableHubDB.settings and FableHubDB.settings.debug then
+  if FableHubDB and FableHubDB.settings and FableHubDB.settings.debug and ns.IsDeveloper() then
     DEFAULT_CHAT_FRAME:AddMessage("|cff888888FableHub debug|r: " .. tostring(msg))
   end
 end
@@ -414,6 +415,9 @@ ns.RegisterEvent("PLAYER_LOGIN", function()
   ns.RequestRoster()
   -- refresh the roster every 60s so online status stays current
   C_Timer.NewTicker(60, function() if IsInGuild() then ns.RequestRoster() end end)
+  -- global handle for /dump FableHub, on the developer's account only
+  -- (Battle.net info can take a few seconds after login to arrive)
+  C_Timer.After(10, function() if ns.IsDeveloper() then FableHub = ns end end)
   ns.Fire("LOGIN")
 end)
 
@@ -454,7 +458,7 @@ SlashCmdList.FABLEHUB = function(msg)
   elseif msg == "resetwindow" then
     if ns.ResetWindow then ns.ResetWindow() end
     ns.Print("Window size and position reset.")
-  elseif msg == "debug" then
+  elseif msg == "debug" and ns.IsDeveloper() then
     FableHubDB.settings.debug = not FableHubDB.settings.debug
     ns.Print("Debug " .. (FableHubDB.settings.debug and "on" or "off"))
   elseif msg == "status" then
@@ -466,6 +470,6 @@ SlashCmdList.FABLEHUB = function(msg)
     ns.Fire("DATA_CHANGED")
     ns.Print("Cleared stored guild data. It will refill as guildmates log in.")
   else
-    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub status | /fhub bug - report to copy | /fhub ping Name - test whispers | /fhub reset | /fhub debug")
+    ns.Print("/fhub - open window | /fhub sync - resync with guild | /fhub scan - rescan your character | /fhub minimap - show or hide the minimap button | /fhub resetwindow | /fhub opacity 50-100 | /fhub status | /fhub bug - report to copy | /fhub ping Name - test whispers | /fhub reset")
   end
 end

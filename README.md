@@ -80,7 +80,6 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 | `/fhub bug` | A report to copy into Discord when something's wrong (version, client, name matching, traffic, recent errors) |
 | `/fhub ping Name` | Test which spelling of a guildmate's name FableHub can whisper |
 | `/fhub reset` | Clear stored guild data |
-| `/fhub debug` | Toggle debug messages |
 
 `/fablehub` works as well.
 

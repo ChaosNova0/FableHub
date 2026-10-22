@@ -146,13 +146,6 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   local rankNote = R:Note()
   R:Button("Feature permissions", 220, function() UI.ShowPanel("permissions") end)
   local lootToggle = R:Option("Announce awarded loot in raid chat", "lootAnnounce")
-  if ns.IsDeveloper() then -- only on the developer's Battle.net account
-    R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)
-      FableHubDB.settings.testOfficer = v and true or nil
-      ns.Fire("PLANS_CHANGED")
-      UI.QueueRefresh()
-    end, "FableHub treats you as an officer so you can try officer features. Guildmates ignore anything you post as an officer unless your real rank is one.")
-  end
 
   R:Header("Data")
   R:Button("Sync with guild now", 220, function() if ns.ForceSync then ns.ForceSync() end end)
@@ -173,8 +166,17 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
     SlashCmdList.FABLEHUB("reset")
     panel:Refresh()
   end)
-  R:Toggle("Debug messages", function() return FableHubDB.settings.debug and true or false end,
-    function(v) FableHubDB.settings.debug = v and true or nil end)
+  -- Developer tools: only built on the developer's Battle.net account
+  if ns.IsDeveloper() then
+    R:Header("Developer")
+    R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)
+      FableHubDB.settings.testOfficer = v and true or nil
+      ns.Fire("PLANS_CHANGED")
+      UI.QueueRefresh()
+    end, "FableHub treats you as an officer so you can try officer features. Guildmates ignore anything you post as an officer unless your real rank is one.")
+    R:Toggle("Debug messages", function() return FableHubDB.settings.debug and true or false end,
+      function(v) FableHubDB.settings.debug = v and true or nil end)
+  end
   local version = R:Note()
 
   local function Arrange()

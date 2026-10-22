@@ -93,13 +93,13 @@ Guild roster and profession tracker for WoW: Forever.
   - Raids: run the ready check automatically.
   - Officers: officer ranks (Guild Master), feature permissions, announce awarded loot in raid chat.
   - **Feature permissions** (button under Officers): a grid of features and guild ranks. The Guild Master ticks which ranks may use each one: Announcements, Raid nights, Raid plans, Loot, Alts, Bank requests (handing over / declining), Craft requests (cancelling anyone's), and Ask the bank (asking for guild bank items). Hover a feature for exactly what it covers. A feature the Guild Master hasn't changed follows the officer ranks setting (Ask the bank: every rank); **Reset** puts one back, **Reset all** puts them all back. The Guild Master can always use everything. Everyone else can look at the grid but not change it. It's checked by every guildmate's FableHub, not just by hiding buttons.
-  - Data: sync now, rescan your character, clear stored guild data (click twice), debug messages.
+  - Data: sync now, rescan your character, clear stored guild data (click twice).
 - If EllesmereUI is installed, FableHub uses its accent colour.
 - **Open each of your profession windows once** after installing so your recipes are shared.
   Skill levels share automatically.
 
 ## Commands
-`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test which spelling of a name FableHub can whisper (works even if they don't have FableHub) · `/fhub reset` clear stored guild data · `/fhub debug`
+`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test which spelling of a name FableHub can whisper (works even if they don't have FableHub) · `/fhub reset` clear stored guild data
 
 When guildmates run a newer FableHub, you'll get a chat message and the sidebar shows **update** next to the version.
 

@@ -1,0 +1,5 @@
+# Kept in the repository but left out of release zips (git archive and
+# GitHub's "Source code" downloads)
+tests/ export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
