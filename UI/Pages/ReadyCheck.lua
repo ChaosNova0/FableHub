@@ -66,7 +66,7 @@ ns.RegisterPanel("readycheck", "Ready check", nil, function(panel)
   end
 
   function panel:Refresh()
-    UI.SetHint("Updates on every ready check. Hover a player for details. Buff and consumable lists live in Consumables.lua.")
+    UI.SetHint("Updates on every ready check. Hover a player for details. Buff and consumable lists live in Data/Consumables.lua.")
     local last = RC.last
     if not last then
       status:SetText("No check yet")

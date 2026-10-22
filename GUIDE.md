@@ -45,7 +45,7 @@ Guild roster and profession tracker for WoW: Forever.
     - **From raid night > Unlink** turns it back into an ordinary plan.
   - Plans are saved; **Share** sends one to the guild. The Guild Master chooses which ranks count as officers.
   - Players not in the guild can be added by name and class.
-  - The buff list lives in `Buffs.lua` and can be edited as Forever's classes change.
+  - The buff list lives in `Data/Buffs.lua` and can be edited as Forever's classes change.
 - **Raids > Raid nights**: officers create one-off or weekly raid nights (shown in everyone's own time zone).
   - Every field can be typed. Day: `21/10`, `21 Oct`, `tomorrow`, `tue` (or pick from the calendar). Start: `20:00`, `8pm`, `8:30 pm` (or pick from the 15-minute list). Length: `3h`, `2h30`, `2:30`, `90m`.
   - **Copy** makes a new raid night with the same settings; just pick the new date.
@@ -65,7 +65,7 @@ Guild roster and profession tracker for WoW: Forever.
   - A class buff is only expected if someone in the group can cast it. Hover a player for exactly what they have and which enchants are missing.
   - Enchants need an inspect, which only works within about 28 yards: far-away players show a "?" until you click **Re-inspect gear** near them.
   - **Check now** runs it without a ready check. **Only show problems** hides players who are ready. Buffs are checked again when the ready check ends, for people who buffed during it.
-  - The consumables, required class buffs and enchant slots are listed in `Consumables.lua`, so they're easy to change for Forever.
+  - The consumables, required class buffs and enchant slots are listed in `Data/Consumables.lua`, so they're easy to change for Forever.
 - **Loot** (sidebar section):
   - **Priorities**: officers import the Gargul export from That's My BIS (prio lists and wishlists) and it's shared with the guild. Pick a member on the left to see every item on their lists, with prio order, wishlist order and whether they have it. An Items view shows it the other way round.
   - **Add item to a list** (officers): search an item by name or ID (or shift-click it), pick any guild member, choose Prio or Wishlist and the order. These entries survive re-importing from That's My BIS, and override that person's imported entry for the same list.
@@ -80,7 +80,7 @@ Guild roster and profession tracker for WoW: Forever.
 - **Professions > Camping > Camp guide** and **Camp planner**:
   - **Camp guide**: click a profession's heading to show or hide it (remembered); **Collapse all / Expand all** at the top right; searching shows everything. Every profession's camp items (3 tiers each) and the campfires, with skill needed, what they give, the class buff they don't stack with, and how many guildmates can make them. Hover for names.
   - **Camp planner**: saved camp plans. Pick a campfire size (3, 5 or 10 slots), who lights it, and for each slot an item and who brings it. FableHub flags missing skill, the same player twice (each player can place one item) and two items from one profession, lists what the camp gives, and marks buffs your group (or a raid plan) already gets from a class. **Post to chat** sends it to party, raid or guild chat only when you choose a channel.
-  - Camp item data lives in `Camping.lua`; most values aren't published yet, so it's easy to update.
+  - Camp item data lives in `Features/Camping.lua`; most values aren't published yet, so it's easy to update.
 - **Guild Bank** (sidebar section with Contents and Requests): see the guild bank without going to a banker.
   - Addons can only read the bank while it's open, so whenever any member opens the guild bank in game, their FableHub reads the tabs they can see and shares them. "Last read 2h ago by Bob" shows how fresh it is.
   - **Follows the guild's own tab permissions.** The Guild Master's FableHub reads which ranks may view each tab (the Guild Master needs to open the guild bank once with FableHub). Tabs every rank may view go to everyone; restricted tabs are sent privately only to members whose rank may view them, so other members' FableHub never receives them. Before the Guild Master's first visit, a tab only goes to the same rank or higher than whoever read it.
