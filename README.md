@@ -2,7 +2,7 @@
 
 **Guild management for WoW: Forever, built for the guild *Fable*.**
 
-![Version](https://img.shields.io/badge/version-0.20.2-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.21.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 
@@ -45,6 +45,8 @@ The page FableHub opens on.
 
 ### Settings
 Everything in one place (the cog in the title bar): alerts, minimap button, window opacity, officer ranks, and **feature permissions** (below).
+
+Officers also get a **Change log**: the last 20 officer actions their FableHub has seen (permission and officer rank changes, raid nights, attendance fixes, That's My BIS imports, loot priority edits, removed loot, announcements, alt links set by hand, and bank requests handed over or declined), with who did it and when. It needs no extra addon messages, and changes made while you were offline show up once catch-up brings them in.
 
 The window can be resized and every page adapts to its width. If [EllesmereUI](https://www.curseforge.com/wow/addons/ellesmereui) is installed, FableHub uses its accent colour.
 

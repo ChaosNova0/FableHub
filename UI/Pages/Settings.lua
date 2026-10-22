@@ -146,6 +146,10 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   local rankNote = R:Note()
   R:Button("Feature permissions", 220, function() UI.ShowPanel("permissions") end)
   local lootToggle = R:Option("Announce awarded loot in raid chat", "lootAnnounce")
+  -- officers only (hidden for everyone else; see panel:Refresh)
+  local changeLogBtn = R:Button("Change log", 220, function()
+    if P.CanEdit() and ns.ChangeLog then ns.ChangeLog.Show() end
+  end)
 
   R:Header("Data")
   R:Button("Sync with guild now", 220, function() if ns.ForceSync then ns.ForceSync() end end)
@@ -207,6 +211,7 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
     rankNote:SetText(P.IsGuildMaster() and "You're the Guild Master, so you choose this."
       or "Only the Guild Master can change this.")
     lootToggle:SetAlpha(P.CanEdit() and 1 or 0.5)
+    changeLogBtn:SetShown(P.CanEdit())
     if ns.Now() > confirmUntil then clearBtn:SetText("Clear stored guild data") end
     version:SetText(("FableHub %s%s"):format(ns.VERSION or "", P.CanEdit() and "  ·  you're an officer" or ""))
     Arrange()

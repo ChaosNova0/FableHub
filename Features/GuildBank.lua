@@ -533,6 +533,8 @@ local function DecodeReq(text)
            created = Enc.FromB36(f[10]) }
 end
 
+B.DecodeReq = DecodeReq -- for the officer change log
+
 local function Allowed(old, new, relayed)
   local actor = new.actor
   if not actor or actor == "" then return false end

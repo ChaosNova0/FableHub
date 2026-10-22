@@ -695,7 +695,13 @@ function Dispatch(sender, msgType, payload, answering)
   elseif msgType == "W" then HandleWant(sender, payload)
   elseif msgType == "D" then HandleDigest(sender, payload)
   elseif msgType == "F" then HandleFull(sender, payload)
-  elseif ns.CommHandlers[msgType] then ns.CommHandlers[msgType](sender, payload)
+  elseif ns.CommHandlers[msgType] then
+    -- which message is being handled, so the officer change log (ChangeLog.lua)
+    -- can tell what a "...changed" event fired by the handler came from
+    ns.receiving, ns.receivingPayload = msgType, payload
+    local ok, err = pcall(ns.CommHandlers[msgType], sender, payload)
+    ns.receiving, ns.receivingPayload = nil, nil
+    if not ok then error(err, 0) end
   end
 end
 

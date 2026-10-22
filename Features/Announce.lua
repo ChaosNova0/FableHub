@@ -83,6 +83,8 @@ function A.Delete(a)
   return Save(c)
 end
 
+A.Decode = Decode -- for the officer change log
+
 ns.CommHandlers.Z = function(sender, payload)
   local a = Decode(payload)
   if not a then return end

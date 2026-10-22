@@ -541,6 +541,8 @@ function L.Delete(e)
   ns.Fire("LOOT_CHANGED")
 end
 
+L.DecodeEntry = DecodeEntry -- for the officer change log
+
 ns.CommHandlers.L = function(sender, payload)
   local e = DecodeEntry(payload)
   if not e or not ns.OfficerSent(sender, e.by, "loot") or not ns.TimeOK(e.ts) then return end

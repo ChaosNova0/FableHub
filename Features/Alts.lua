@@ -34,6 +34,8 @@ local function Decode(text)
   return f[2], { main = f[3], ts = Enc.FromB36(f[4]) or 0, manual = f[5] == "1" or nil, by = f[6] }
 end
 
+A.Decode = Decode -- for the officer change log
+
 local function Store(char, e)
   local cur = All()[char]
   if cur and (cur.ts or 0) >= (e.ts or 0) then return false end
