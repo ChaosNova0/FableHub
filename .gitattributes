@@ -3,3 +3,4 @@
 tests/ export-ignore
 .gitignore export-ignore
 .gitattributes export-ignore
+.luarc.json export-ignore

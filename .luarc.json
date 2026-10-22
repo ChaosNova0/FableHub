@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.1",
+  "workspace.ignoreDir": [".git", "Libs", "tests"],
+  "diagnostics.globals": [
+    "FABLEHUB_TEST_EPOCH",
+    "BOOKTYPE_SPELL",
+    "GetAddOnInfo",
+    "GetNumSpellTabs",
+    "GetNumTalents",
+    "GetNumTalentTabs",
+    "GetSpellBookItemName",
+    "GetSpellInfo",
+    "GetSpellLink",
+    "GetSpellName",
+    "GetSpellTabInfo",
+    "GetTalentTabInfo",
+    "GuildRoster",
+    "UnitBuff",
+    "ERR_CHAT_PLAYER_NOT_FOUND_S",
+    "ERR_GUILD_JOIN_S",
+    "ERR_GUILD_LEAVE_S",
+    "ERR_GUILD_REMOVE_SS",
+    "LOOT_ITEM",
+    "LOOT_ITEM_MULTIPLE",
+    "LOOT_ITEM_PUSHED_SELF",
+    "LOOT_ITEM_SELF",
+    "LOOT_ITEM_SELF_MULTIPLE"
+  ]
+}
