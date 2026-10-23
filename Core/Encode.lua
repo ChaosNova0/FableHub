@@ -2,6 +2,8 @@
 --
 -- record  = "1^<key>^<ts>^<class>^<level>^<prof>~<prof>..."
 -- prof    = "<skillLine>:<rank>:<max>:<name>:<recipe>.<recipe>..."
+-- fields after the profs: spec tree, points, buffs, spec name, recipe outputs,
+-- then (only when there are any) cooldowns "<id>=<ready>=<dur>,..." and when they were read
 -- numbers are base36 to keep messages short.
 
 local _, ns = ...
@@ -66,12 +68,23 @@ function Enc.EncodeRecord(rec)
   for id in pairs(rec.buffs or {}) do buffs[#buffs + 1] = Clean(id) end
   table.sort(buffs)
   local spec = rec.spec or {}
-  return table.concat({
+  local fields = {
     "1", (tostring(rec.key):gsub("[%^~]", "")), Enc.ToB36(rec.ts), Clean(rec.class), Enc.ToB36(rec.level),
     table.concat(profs, "~"),
     Enc.ToB36(spec.tree or 0), (tostring(spec.points or ""):gsub("[^%d/]", "")), table.concat(buffs, "."), Clean(spec.name),
     Enc.EncodeOutputs(rec),
-  }, "^")
+  }
+  -- profession cooldowns (0.22+), only when there are any so older records encode as before
+  if rec.cds and next(rec.cds) then
+    local cds = {}
+    for id, e in pairs(rec.cds) do
+      cds[#cds + 1] = (tostring(id):gsub("[^%w_]", "")) .. "=" .. Enc.ToB36(e.ready) .. "=" .. Enc.ToB36(e.dur)
+    end
+    table.sort(cds)
+    fields[12] = table.concat(cds, ",")
+    fields[13] = Enc.ToB36(rec.cdChecked or 0)
+  end
+  return table.concat(fields, "^")
 end
 
 local function Split(s, sep)
@@ -109,6 +122,16 @@ function Enc.DecodeRecord(text)
       local r, i = pair:match("^(%w+)=(%w+)$")
       if r then rec.outputs[Enc.FromB36(r)] = Enc.FromB36(i) end
     end
+  end
+  if f[12] and f[12] ~= "" then
+    for _, item in ipairs(Split(f[12], ",")) do
+      local id, ready, dur = item:match("^([%w_]+)=(%w+)=(%w+)$")
+      if id then
+        rec.cds = rec.cds or {}
+        rec.cds[id] = { ready = Enc.FromB36(ready), dur = Enc.FromB36(dur) }
+      end
+    end
+    if rec.cds then rec.cdChecked = Enc.FromB36(f[13]) end
   end
   if f[9] and f[9] ~= "" then
     rec.buffs = {}

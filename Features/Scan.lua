@@ -24,6 +24,7 @@ local function Changed(rec)
   ns.Fire("DATA_CHANGED")
   ns.QueueOwnBroadcast()
 end
+ns.RecordChanged = Changed
 
 ------------------------------------------------------------------------
 -- Class + level

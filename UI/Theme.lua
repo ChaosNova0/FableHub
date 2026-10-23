@@ -370,6 +370,207 @@ function T.Menu(anchor, items, width)
   menu:Show()
 end
 
+-- Filter dropdown under a button: ticks stay open while you pick several.
+-- Closes on a click elsewhere or Escape.
+--   spec.title, spec.width
+--   spec.options()  -> { { value, text, count, checked }, false (= divider), ... }
+--                      options with no count that aren't ticked are left out
+--   spec.onToggle(value), spec.onClear()
+--   spec.mode = { labels = { "All", "Any" }, get() -> index, set(index) }  (optional switch in the header)
+--   spec.onClose()
+local cm, cmCatcher
+function T.CloseCheckMenu()
+  if cm and cm:IsShown() then cm:Hide() end
+end
+
+local function CheckRow(i)
+  local row = cm.rows[i]
+  if row then return row end
+  row = CreateFrame("Button", nil, cm)
+  row:SetHeight(22)
+  local hl = row:CreateTexture(nil, "HIGHLIGHT")
+  hl:SetAllPoints()
+  hl:SetColorTexture(1, 1, 1, 0.06)
+  local box = CreateFrame("Frame", nil, row)
+  box:SetSize(12, 12)
+  box:SetPoint("LEFT", 10, 0)
+  row.boxFill = T.Fill(box, { 1, 1, 1, 0 })
+  T.Border(box, 0.3)
+  row.box = box
+  local tick = box:CreateTexture(nil, "OVERLAY")
+  tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+  tick:SetSize(16, 16)
+  tick:SetPoint("CENTER", 1, 0)
+  tick:SetVertexColor(0.07, 0.06, 0.05)
+  row.tick = tick
+  row.label = T.Text(row, 12, 0.75)
+  row.label:SetJustifyH("LEFT")
+  row.label:SetWordWrap(false)
+  row.count = T.Text(row, 11, 0.45)
+  row.count:SetPoint("RIGHT", -10, 0)
+  row:SetScript("OnClick", function(self) if self.onClick then self.onClick() end end)
+  cm.rows[i] = row
+  return row
+end
+
+local function CheckLine(i)
+  local line = cm.lines[i]
+  if line then return line end
+  line = cm:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 1, 1, 0.08)
+  line:SetHeight(1)
+  cm.lines[i] = line
+  return line
+end
+
+function T.PaintCheckMenu()
+  if not cm or not cm.spec then return end
+  local spec = cm.spec
+  local W = spec.width or 220
+  local r, g, b = T.Accent()
+  local y = -6
+
+  cm.title:ClearAllPoints()
+  cm.title:SetPoint("TOPLEFT", 10, y - 4)
+  cm.title:SetText((spec.title or ""):upper())
+  if spec.mode then
+    local sel = spec.mode.get()
+    for i, btn in ipairs(cm.seg) do
+      btn.text:SetText(spec.mode.labels[i])
+      if i == sel then btn.bg:SetColorTexture(r, g, b, 0.18); btn.text:SetTextColor(r, g, b, 1)
+      else btn.bg:SetColorTexture(1, 1, 1, 0); btn.text:SetTextColor(1, 1, 1, 0.5) end
+      btn:SetScript("OnClick", function() spec.mode.set(i); T.PaintCheckMenu() end)
+    end
+    cm.segHolder:ClearAllPoints()
+    cm.segHolder:SetPoint("TOPRIGHT", -8, y - 1)
+    cm.segHolder:Show()
+  else
+    cm.segHolder:Hide()
+  end
+  y = y - 24
+
+  local ri, li, lastRow, any = 0, 0, false, false
+  local function Divider()
+    li = li + 1
+    local line = CheckLine(li)
+    line:ClearAllPoints()
+    line:SetPoint("TOPLEFT", 1, y - 4)
+    line:SetPoint("TOPRIGHT", -1, y - 4)
+    line:Show()
+    y = y - 9
+  end
+  local function Row(text, alpha)
+    ri = ri + 1
+    local row = CheckRow(ri)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", 1, y)
+    row:SetPoint("TOPRIGHT", -1, y)
+    row.label:SetText(text)
+    row.label:SetTextColor(1, 1, 1, alpha)
+    row:Show()
+    y = y - 22
+    return row
+  end
+
+  for _, o in ipairs(spec.options() or {}) do
+    if o == false then
+      if lastRow then Divider(); lastRow = false end
+    elseif o.checked or (o.count or 0) > 0 then
+      local row = Row(o.text, o.checked and 1 or ((o.count or 0) > 0 and 0.75 or 0.35))
+      row.box:Show()
+      row.label:ClearAllPoints()
+      row.label:SetPoint("LEFT", 30, 0)
+      row.label:SetPoint("RIGHT", -40, 0)
+      row.count:SetText(tostring(o.count or 0))
+      row.count:Show()
+      row.tick:SetShown(o.checked and true or false)
+      if o.checked then row.boxFill:SetColorTexture(r, g, b, 1); row.box:SetBorderColor(r, g, b, 1)
+      else row.boxFill:SetColorTexture(1, 1, 1, 0); row.box:SetBorderAlpha(0.3) end
+      local value = o.value
+      row.onClick = function() spec.onToggle(value); T.PaintCheckMenu() end
+      lastRow, any = true, true
+    end
+  end
+  if not any then
+    local row = Row("Nothing in this view", 0.35)
+    row.box:Hide(); row.count:Hide()
+    row.label:ClearAllPoints(); row.label:SetPoint("LEFT", 10, 0)
+    row.onClick = nil
+  end
+  Divider()
+  local clear = Row("Clear", 0.5)
+  clear.box:Hide(); clear.count:Hide()
+  clear.label:ClearAllPoints(); clear.label:SetPoint("LEFT", 10, 0)
+  clear.onClick = function() spec.onClear(); T.PaintCheckMenu() end
+
+  for i = ri + 1, #cm.rows do cm.rows[i]:Hide() end
+  for i = li + 1, #cm.lines do cm.lines[i]:Hide() end
+  cm:SetSize(W, -y + 4)
+end
+
+function T.CheckMenu(anchor, spec)
+  if not cm then
+    cmCatcher = CreateFrame("Button", nil, UIParent)
+    cmCatcher:SetAllPoints(UIParent)
+    cmCatcher:SetFrameStrata("FULLSCREEN")
+    cmCatcher:RegisterForClicks("AnyUp")
+    cmCatcher:SetScript("OnClick", T.CloseCheckMenu)
+    cmCatcher:Hide()
+    cm = CreateFrame("Frame", nil, UIParent)
+    cm:SetFrameStrata("FULLSCREEN_DIALOG")
+    cm:SetClampedToScreen(true)
+    cm:EnableMouse(true)
+    T.Fill(cm, { 0.055, 0.047, 0.038, 0.98 })
+    T.Border(cm, 0.14)
+    cm.rows, cm.lines = {}, {}
+    cm.title = T.Text(cm, 11, T.section)
+    local holder = CreateFrame("Frame", nil, cm)
+    holder:SetSize(64, 16)
+    T.Border(holder, 0.18)
+    cm.segHolder, cm.seg = holder, {}
+    for i = 1, 2 do
+      local btn = CreateFrame("Button", nil, holder)
+      btn:SetSize(32, 16)
+      btn:SetPoint("LEFT", (i - 1) * 32, 0)
+      btn.bg = T.Fill(btn, { 1, 1, 1, 0 })
+      btn.text = T.Text(btn, 11, 0.5)
+      btn.text:SetPoint("CENTER")
+      cm.seg[i] = btn
+    end
+    cm:Hide()
+    cm:SetScript("OnHide", function(self)
+      cmCatcher:Hide()
+      local s = self.spec
+      self.spec = nil
+      if s and s.onClose then s.onClose() end
+    end)
+    -- Escape closes just this menu (not the FableHub window); other keys pass through
+    cm:SetScript("OnKeyDown", function(self, key)
+      local free = not (InCombatLockdown and InCombatLockdown())
+      if key == "ESCAPE" then
+        if free then pcall(self.SetPropagateKeyboardInput, self, false) end
+        T.CloseCheckMenu()
+      elseif free then
+        pcall(self.SetPropagateKeyboardInput, self, true)
+      end
+    end)
+  end
+  if cm:IsShown() then cm:Hide() end
+  cm.spec = spec
+  cm:ClearAllPoints()
+  cm:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
+  T.PaintCheckMenu()
+  local free = not (InCombatLockdown and InCombatLockdown())
+  cm:EnableKeyboard(free)
+  if free then pcall(cm.SetPropagateKeyboardInput, cm, true) end
+  cmCatcher:Show()
+  cm:Show()
+end
+
+function T.CheckMenuOpen(spec)
+  return cm and cm:IsShown() and (spec == nil or cm.spec == spec) or false
+end
+
 -- A small pop-up that opens at the mouse and closes when you click elsewhere.
 local popupCatcher, openPopup
 function T.Popup(width, height)

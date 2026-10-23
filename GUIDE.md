@@ -1,4 +1,4 @@
-# FableHub 0.21.0
+# FableHub 0.22.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -32,7 +32,12 @@ Guild roster and profession tracker for WoW: Forever.
 - **Professions > Recipes**: pick a profession on the left (or All). Professions are grouped into Crafting, Gathering and Secondary; only Crafting shows unless you tick "Show gathering" or "Show secondary".
   - *Recipes*: one row per character. Click a name to expand their recipes. Recipes show the crafted item's name and icon in its rarity colour (enchants keep the recipe name); hover for the recipe. Searching (recipe or item name) expands matches automatically. Recipes are sorted highest item level first within each profession; the toolbar button switches to A to Z.
     Shift-click a recipe to link it; right-click to whisper a crafter.
-  - *Crafters*: everyone with that profession, by skill.
+  - *Cooldowns*: transmutes, Mooncloth and the Salt Shaker show as an icon next to the profession on each character's row: bright with "Ready", or darkened with the time left (bronze when it's under a day). Hover a name for the exact times. A character's cooldowns appear once they log in with FableHub 0.22 or later; one not seen for two weeks shows "?", since it may have been used.
+  - *Filters* (the row under the search box):
+    - **Cooldown crafts** lists each cooldown with who has it ready and who's still waiting, soonest first. **Ready now only** hides the rest. Click a cooldown to see its recipes; right-click to whisper someone who's ready.
+    - **Slot** and **Armor** (for gear-making professions) and **Stat** narrow the recipe list. Tick as many as you like; the menu stays open and shows how many recipes each choice leaves. Stat's **All** shows recipes with every ticked stat, **Any** with at least one. Stats come from the item's own text, so gear, elixirs, Well Fed food and enchants all count.
+    - **Clear filters** resets them.
+  - *Crafters*: everyone with that profession, by skill, with their cooldowns.
 - **Raids** (sidebar section; click to open or close it):
 - **Raids > Raid plans**: build raid plans (10, 20 or 40 players).
   - Officers drag members from the pool into groups, or click a member then click a slot. Right-click removes; Ctrl-click changes role.

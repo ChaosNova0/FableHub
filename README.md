@@ -2,7 +2,7 @@
 
 **Guild management for WoW: Forever, built for the guild *Fable*.**
 
-![Version](https://img.shields.io/badge/version-0.21.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.22.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 
@@ -24,7 +24,8 @@ The page FableHub opens on.
 - **Alts**: linked automatically from each player's own account and grouped under their main. Players pick their main; officers can fix links.
 
 ### Professions
-- **Recipes**: every guildmate's recipes, searchable by recipe or crafted item, in rarity colours, highest item level first.
+- **Recipes**: every guildmate's recipes, searchable by recipe or crafted item, in rarity colours, highest item level first. Filter by gear slot, armour type and stats (all of them, or any).
+- **Cooldowns**: transmutes, Mooncloth and the Salt Shaker next to each character, ready or with the time left. **Cooldown crafts** shows whose are ready across the guild.
 - **Craft Requests**: ask the guild for an item; members who know the recipe are told. Claim, mark done, cancel.
 - **Camping**: a camp guide (every profession's camp items and campfires) and a camp planner.
 
