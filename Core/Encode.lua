@@ -48,7 +48,9 @@ function Enc.EncodeOutputs(rec)
   return table.concat(out, ",")
 end
 
-function Enc.EncodeRecord(rec)
+-- noCds: leave the cooldowns out (to compare with a copy passed on by a 0.21
+-- client, which doesn't know them and relays records without them)
+function Enc.EncodeRecord(rec, noCds)
   local profs = {}
   -- sort for stable output (helps tests and avoids needless diffs)
   local lines = {}
@@ -75,7 +77,7 @@ function Enc.EncodeRecord(rec)
     Enc.EncodeOutputs(rec),
   }
   -- profession cooldowns (0.22+), only when there are any so older records encode as before
-  if rec.cds and next(rec.cds) then
+  if not noCds and rec.cds and next(rec.cds) then
     local cds = {}
     for id, e in pairs(rec.cds) do
       cds[#cds + 1] = (tostring(id):gsub("[^%w_]", "")) .. "=" .. Enc.ToB36(e.ready) .. "=" .. Enc.ToB36(e.dur)
@@ -104,55 +106,99 @@ local function Split(s, sep)
 end
 Enc.Split = Split
 
+-- Limits on what a received record may hold (records come from other players,
+-- so they're untrusted): far above anything real, small enough that nobody can
+-- fill everyone's saved data
+local MAX_NAME = 32         -- profession and spec names
+local MAX_PROFS = 10        -- professions per record
+local MAX_RECIPES = 1000    -- recipes per profession
+local MAX_OUTPUTS = 2000    -- recipe -> crafted item pairs
+local MAX_CD = 14 * 86400   -- longest cooldown, and how far ahead one can be ready
+local MAX_BUFFS = 128       -- buffs per record (Data/Buffs.lua lists ~60; a real record must
+                            -- never be cut short, or its owner would see a "different" copy)
+local MAX_BUFF_ID = 32      -- length of one buff id
+local MAX_CLASS = 16        -- class token ("WARRIOR"): upper-case letters only
+
 function Enc.DecodeRecord(text)
   local f = Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" then return nil end
+  local class = f[4]
+  if not class or #class > MAX_CLASS or not class:match("^%u+$") then class = nil end
   local rec = {
     key = f[2],
     ts = Enc.FromB36(f[3]),
-    class = (f[4] ~= "" and f[4]) or nil,
+    class = class,
     level = Enc.FromB36(f[5]),
     profs = {},
   }
   local tree = Enc.FromB36(f[7])
-  if tree > 0 then rec.spec = { tree = tree, points = f[8] or "", name = (f[10] ~= "" and f[10]) or nil } end
+  if tree > 0 then
+    rec.spec = { tree = tree, points = (f[8] or ""):sub(1, 16),
+                 name = (f[10] and f[10] ~= "" and f[10]:sub(1, MAX_NAME)) or nil }
+  end
   if f[11] and f[11] ~= "" then
     rec.outputs = {}
+    local n = 0
     for _, pair in ipairs(Split(f[11], ",")) do
       local r, i = pair:match("^(%w+)=(%w+)$")
-      if r then rec.outputs[Enc.FromB36(r)] = Enc.FromB36(i) end
-    end
-  end
-  if f[12] and f[12] ~= "" then
-    for _, item in ipairs(Split(f[12], ",")) do
-      local id, ready, dur = item:match("^([%w_]+)=(%w+)=(%w+)$")
-      if id then
-        rec.cds = rec.cds or {}
-        rec.cds[id] = { ready = Enc.FromB36(ready), dur = Enc.FromB36(dur) }
+      if r then
+        n = n + 1
+        if n > MAX_OUTPUTS then break end
+        rec.outputs[Enc.FromB36(r)] = Enc.FromB36(i)
       end
     end
-    if rec.cds then rec.cdChecked = Enc.FromB36(f[13]) end
   end
   if f[9] and f[9] ~= "" then
     rec.buffs = {}
-    for _, id in ipairs(Split(f[9], ".")) do if id ~= "" then rec.buffs[id] = true end end
+    local n = 0
+    for _, id in ipairs(Split(f[9], ".")) do
+      if id ~= "" and #id <= MAX_BUFF_ID then
+        n = n + 1
+        if n > MAX_BUFFS then break end
+        rec.buffs[id] = true
+      end
+    end
   end
+  local nProfs = 0
   for _, ptext in ipairs(Split(f[6] or "", "~")) do
     local pf = Split(ptext, ":")
     local skillLine = Enc.FromB36(pf[1])
-    if skillLine > 0 then
-      local recipes = {}
+    if skillLine > 0 and nProfs < MAX_PROFS then
+      nProfs = nProfs + 1
+      local recipes, n = {}, 0
       for _, r in ipairs(Split(pf[5] or "", ".")) do
         local id = Enc.FromB36(r)
-        if id > 0 then recipes[id] = true end
+        if id > 0 then
+          n = n + 1
+          if n > MAX_RECIPES then break end
+          recipes[id] = true
+        end
       end
       rec.profs[skillLine] = {
         rank = Enc.FromB36(pf[2]),
         max = Enc.FromB36(pf[3]),
-        name = pf[4] or "",
+        name = (pf[4] or ""):sub(1, MAX_NAME),
         recipes = recipes,
       }
     end
+  end
+  -- only cooldowns FableHub knows (Data/Cooldowns.lua loads after this file,
+  -- so the list is looked up here, when a record arrives), and only for a
+  -- profession the record has (the owner's own cooldowns always do, see
+  -- Cooldowns.lua), so nobody can hang made-up cooldowns on a record
+  local knownCds = ns.COOLDOWN_BY_ID
+  if f[12] and f[12] ~= "" and knownCds then
+    local now = ns.Now and ns.Now() or 0
+    for _, item in ipairs(Split(f[12], ",")) do
+      local id, ready, dur = item:match("^([%w_]+)=(%w+)=(%w+)$")
+      local cd = id and knownCds[id]
+      if cd and rec.profs[cd.skillLine] then
+        rec.cds = rec.cds or {}
+        rec.cds[id] = { ready = math.max(0, math.min(Enc.FromB36(ready), now + MAX_CD)),
+                        dur = math.max(0, math.min(Enc.FromB36(dur), MAX_CD)) }
+      end
+    end
+    if rec.cds then rec.cdChecked = math.max(0, math.min(Enc.FromB36(f[13]), now + 300)) end
   end
   return rec
 end

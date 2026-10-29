@@ -132,6 +132,10 @@ end
 -- Facts
 ------------------------------------------------------------------------
 local cache = {}
+-- spells whose description hadn't loaded: [key] = { n = tries, t = last try }
+local spellTries = {}
+local SPELL_TRIES = 5      -- then it's taken as giving no stats
+local SPELL_RETRY = 5      -- seconds between tries
 
 -- { slot, armor, stats = { [stat] = true } } for a recipe and the item it makes
 -- (itemID nil for enchants), or nil while the game is still loading it
@@ -148,16 +152,28 @@ function F.Get(recipeID, itemID)
     end
     local slot = SLOT_OF[equipLoc or ""]
     local armor = (classID == ARMOR_CLASS and slot and slot ~= "Back") and ARMOR_SUB[subclassID] or nil
+    -- the item has loaded: a tooltip with only its name line just gives no stats
     local lines = ItemLines(itemID)
-    if not lines then return nil end
-    facts = { slot = slot, armor = armor, stats = F.ParseStats(lines) }
+    facts = { slot = slot, armor = armor, stats = lines and F.ParseStats(lines) or {} }
   else
+    -- description not loaded yet: try again a few times, a little apart
+    local now = GetTime()
+    local t = spellTries[key]
+    if t and now - t.t < SPELL_RETRY then return nil end
     local lines = SpellLines(recipeID)
-    if not lines then return nil end
-    facts = { stats = F.ParseStats(lines) }
+    if not lines then
+      if not t then t = { n = 0, t = 0 }; spellTries[key] = t end
+      t.n, t.t = t.n + 1, now
+      if t.n < SPELL_TRIES then return nil end
+      spellTries[key] = nil
+      facts = { stats = {} }
+    else
+      spellTries[key] = nil
+      facts = { stats = F.ParseStats(lines) }
+    end
   end
   cache[key] = facts
   return facts
 end
 
-function F.Forget() cache = {} end
+function F.Forget() cache = {}; spellTries = {} end

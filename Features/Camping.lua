@@ -280,15 +280,30 @@ end
 ------------------------------------------------------------------------
 -- Chat summary (only when someone clicks Post)
 ------------------------------------------------------------------------
+-- at most `n` bytes of s, without cutting a multi-byte character in half
+local function Clip(s, n)
+  s = tostring(s or "")
+  if #s <= n then return s end
+  local cut = n
+  -- step back over continuation bytes (0x80-0xBF) to the start of the character
+  while cut > 0 and s:byte(cut + 1) and s:byte(cut + 1) >= 128 and s:byte(cut + 1) < 192 do cut = cut - 1 end
+  return s:sub(1, cut)
+end
+
 function C.SummaryLines(plan)
   local fire = C.FIRE_BY_ID[plan.fire] or C.FIRES[1]
   local parts = {}
   for i = 1, fire.slots do
     local s = plan.slots[i]
     local item = s and s.item and C.ITEM_BY_ID[s.item]
-    if item then parts[#parts + 1] = (s.key and (ns.ShortName(s.key) .. ": ") or "") .. item.name end
+    if item then parts[#parts + 1] = Clip((s.key and (ns.ShortName(s.key) .. ": ") or "") .. item.name, 120) end
   end
-  local head = ("Camp \"%s\" (%s%s): "):format(plan.name, fire.name, plan.builder and (" by " .. ns.ShortName(plan.builder)) or "")
+  -- camp names can be long (shared plans, older saves): keep the header short so
+  -- every chat line stays under the 255-byte limit
+  local name = tostring(plan.name or "")
+  if #name > 40 then name = Clip(name, 37) .. "..." end
+  local head = ("Camp \"%s\" (%s%s): "):format(name, fire.name,
+    plan.builder and (" by " .. Clip(ns.ShortName(plan.builder), 40)) or "")
   -- split into chat-sized lines
   local lines, cur = {}, head
   for i, p in ipairs(parts) do

@@ -43,15 +43,27 @@ function UI.NameCell(key, classFile, online)
   return ns.Icons.Dot(online) .. " " .. ns.Icons.Class(classFile, 14) .. " " .. text
 end
 
+-- Opens a whisper to them in the chat box, with text typed in ready to send.
+-- The target is the spelling whispers reach (names have a space: "/w First
+-- Lastname text" can't be parsed, so the text goes into the box separately).
 function UI.Whisper(key, text)
-  local target = ns.ShortName(key)
-  if text and text ~= "" then
-    local cmd = "/w " .. target .. " " .. text
+  local target = (ns.WhisperTarget and ns.WhisperTarget(key)) or key
+  local hasText = text and text ~= ""
+  -- sets the tell target directly (no parsing, so two-word names work) and
+  -- puts the text in the box in one go
+  if ChatFrame_SendTellWithMessage then return ChatFrame_SendTellWithMessage(target, hasText and text or "") end
+  local sendTell = ChatFrame_SendTell or (ChatFrameUtil and ChatFrameUtil.SendTell)
+  if not sendTell then
+    -- old behaviour: a /w command line
+    local cmd = "/w " .. ns.ShortName(key) .. (hasText and (" " .. text) or "")
     if ChatFrameUtil and ChatFrameUtil.OpenChat then return ChatFrameUtil.OpenChat(cmd) end
     if ChatFrame_OpenChat then return ChatFrame_OpenChat(cmd) end
+    return
   end
-  if ChatFrameUtil and ChatFrameUtil.SendTell then return ChatFrameUtil.SendTell(target) end
-  if ChatFrame_SendTell then return ChatFrame_SendTell(target) end
+  sendTell(target)
+  if not hasText then return end
+  local box = (ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()) or ChatFrame1EditBox
+  if box and box.Insert then box:Insert(text) end
 end
 
 function UI.InsertLink(link)

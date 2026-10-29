@@ -343,14 +343,25 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     return out
   end
 
+  -- does a recipe give every ticked stat? (Stat "All" menu counts)
+  local function HasAllTicked(stats)
+    for s in pairs(filt.stat) do if not stats[s] then return false end end
+    return true
+  end
+
   local function MenuOptions(name)
     local counts = {}
+    -- Stat "All": the count for X is how many recipes give every ticked stat and X,
+    -- i.e. what the list would show if you ticked X too
+    local needAll = name == "stat" and statAll and Active("stat")
     for id, r in pairs(ScopeRecipes()) do
       if SearchHit(r.name, r.itemID) and PassesFilters(id, r.itemID, name) then
         local f = RF.Get(id, r.itemID)
         if f then
           if name == "stat" then
-            for s in pairs(f.stats) do counts[s] = (counts[s] or 0) + 1 end
+            if not needAll or HasAllTicked(f.stats) then
+              for s in pairs(f.stats) do counts[s] = (counts[s] or 0) + 1 end
+            end
           else
             local v = name == "slot" and f.slot or f.armor
             if v then counts[v] = (counts[v] or 0) + 1 end

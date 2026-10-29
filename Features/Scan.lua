@@ -18,7 +18,8 @@ local function SetsEqual(a, b)
 end
 
 local function Changed(rec)
-  rec.ts = ns.Now()
+  -- never backwards (ReassertMine may have pushed it past the clock)
+  rec.ts = math.max(ns.Now(), (rec.ts or 0) + 1)
   ns.MirrorMyRecord()
   if ns.Activity then pcall(ns.Activity.CheckOwn) end
   ns.Fire("DATA_CHANGED")

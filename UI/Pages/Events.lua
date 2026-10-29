@@ -616,7 +616,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
     end
     local cur = E.Signups(occId)[key]
     notePop.occId, notePop.key = occId, key
-    notePop.title:SetText("Note for " .. ns.ShortName(cur and cur.char or key))
+    notePop.title:SetText("Note for " .. ns.ShortName(cur and E.SignupChar(key, cur) or key))
     notePop.box:SetText(cur and cur.note or "")
     notePop:Open()
     notePop.box:SetFocus()
@@ -760,9 +760,10 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
       if s.status ~= "R" then
         counts[s.status] = (counts[s.status] or 0) + 1
         if (s.status == "A" or s.status == "L") and s.role then roles[s.role] = roles[s.role] + 1 end
+        local char = E.SignupChar(signer, s)
         seen[signer] = true
-        seen[s.char or signer] = true
-        rows[#rows + 1] = { key = signer, char = s.char or signer, signup = s }
+        seen[char] = true
+        rows[#rows + 1] = { key = signer, char = char, signup = s }
       end
     end
     local noReply = 0

@@ -42,18 +42,52 @@ end
 ------------------------------------------------------------------------
 -- Reading your own cooldowns
 ------------------------------------------------------------------------
+-- start, duration; nil when the game couldn't be asked (not the same as 0 = ready)
 local function SpellCooldown(id)
   if C_Spell and C_Spell.GetSpellCooldown then
     local info = SafeCall(C_Spell.GetSpellCooldown, id)
     if type(info) == "table" then return info.startTime or 0, info.duration or 0 end
   end
   local start, dur = SafeCall(GetSpellCooldown, id)
-  return start or 0, dur or 0
+  if type(start) ~= "number" then return nil end
+  return start, type(dur) == "number" and dur or 0
 end
 
 local function ItemCooldown(id)
   local start, dur = SafeCall((C_Container and C_Container.GetItemCooldown) or GetItemCooldown, id)
-  return start or 0, dur or 0
+  if type(start) ~= "number" then return nil end
+  return start, type(dur) == "number" and dur or 0
+end
+
+-- Is your own profession window open? Tracked from the window's events, and
+-- checked with the game too in case the close event never came.
+local windowOpen = false
+ns.RegisterEvent("TRADE_SKILL_SHOW", function() windowOpen = true end)
+ns.RegisterEvent("TRADE_SKILL_CLOSE", function() windowOpen = false end)
+
+-- the profession shown in your own open profession window, or nil
+local function OpenSkillLine()
+  local T = C_TradeSkillUI
+  if not windowOpen or not T then return nil end
+  if not SafeCall(T.IsTradeSkillReady) then return nil end
+  if SafeCall(T.IsTradeSkillLinked) or SafeCall(T.IsTradeSkillGuild) or SafeCall(T.IsNPCCrafting) then return nil end
+  local base = SafeCall(T.GetBaseProfessionInfo)
+  if type(base) ~= "table" then return nil end
+  local skillLine = base.professionID
+  if type(base.parentProfessionID) == "number" and base.parentProfessionID > 0 then skillLine = base.parentProfessionID end
+  return skillLine
+end
+
+-- seconds left on a recipe from the open profession window; nil when the game
+-- doesn't say (then the spell cooldown is used instead)
+local function RecipeCooldownLeft(recipeID)
+  local T = C_TradeSkillUI
+  if not T or type(T.GetRecipeCooldown) ~= "function" then return nil end
+  local left, _, charges, maxCharges = SafeCall(T.GetRecipeCooldown, recipeID)
+  if type(left) ~= "number" then return nil end
+  -- a cooldown with charges left can be used now
+  if type(maxCharges) == "number" and maxCharges > 0 and type(charges) == "number" and charges > 0 then return 0 end
+  return math.max(0, left)
 end
 
 local function OwnsItem(id)
@@ -64,7 +98,9 @@ end
 -- a recipe of this cooldown you know, if any
 local function KnownSpell(cd, rec)
   local p = rec.profs and rec.profs[cd.skillLine]
-  local known = p and p.recipes or {}
+  -- without the profession in the record, other players drop the cooldown on receipt
+  if not p then return nil end
+  local known = p.recipes or {}
   for _, id in ipairs(cd.spells or {}) do
     if known[id] or SafeCall(IsPlayerSpell, id) then return id end
   end
@@ -76,41 +112,62 @@ local function KnownSpell(cd, rec)
   return nil
 end
 
--- what the game says right now: { [id] = { ready, dur } }
-local function ReadCooldowns(rec, now)
-  local found = {}
-  for _, cd in ipairs(ns.COOLDOWNS) do
-    local start, dur, has = 0, 0, false
-    if cd.item then
-      if OwnsItem(cd.item) then has = true; start, dur = ItemCooldown(cd.item) end
-    else
-      local spell = KnownSpell(cd, rec)
-      if spell then has = true; start, dur = SpellCooldown(spell) end
-    end
-    if has then
-      -- short durations are the global cooldown, not the profession one
-      local left = (start > 0 and dur > 60) and (start + dur - GetTime()) or 0
-      local old = rec.cds and rec.cds[cd.id]
-      found[cd.id] = {
-        ready = left > 0 and math.floor(now + left + 0.5) or 0,
-        dur = dur > 60 and math.floor(dur + 0.5) or (old and old.dur) or 0,
-      }
-    end
-  end
-  return found
-end
-
 -- when a stored cooldown is ready, as a time still to come (0 = already ready)
 local function Pending(e, now)
   local r = e and e.ready or 0
   return r > now and r or 0
 end
 
+-- what the game says right now: { [id] = { ready, dur } }, and whether any
+-- cooldown was actually read. A read that failed, or one saying "ready" while
+-- the stored time is still to come, keeps the stored time: only the open
+-- profession window's own answer (authoritative) or the stored time passing
+-- makes it ready.
+local function ReadCooldowns(rec, now)
+  local found, read = {}, false
+  local openLine = OpenSkillLine()
+  for _, cd in ipairs(ns.COOLDOWNS) do
+    local start, dur, has = 0, 0, false
+    local left -- seconds to go, from the profession window (authoritative)
+    if cd.item then
+      -- Salt Shaker: owning it isn't enough, it needs the profession
+      if rec.profs[cd.skillLine] and OwnsItem(cd.item) then has = true; start, dur = ItemCooldown(cd.item) end
+    else
+      local spell = KnownSpell(cd, rec)
+      if spell then
+        has = true
+        if openLine and openLine == cd.skillLine then left = RecipeCooldownLeft(spell) end
+        start, dur = SpellCooldown(spell)
+      end
+    end
+    if has then
+      local old = rec.cds and rec.cds[cd.id]
+      local oldDur = old and old.dur or 0
+      local spellDur = (type(dur) == "number" and dur > 60) and math.floor(dur + 0.5) or nil
+      if left ~= nil then
+        read = true
+        found[cd.id] = { ready = left > 0 and math.floor(now + left + 0.5) or 0, dur = spellDur or oldDur }
+      elseif start == nil then
+        -- the game couldn't be asked: keep what we had
+        if old then found[cd.id] = { ready = Pending(old, now), dur = oldDur } end
+      else
+        read = true
+        -- short durations are the global cooldown, not the profession one
+        local l = (start > 0 and dur > 60) and (start + dur - GetTime()) or 0
+        local ready = l > 0 and math.floor(now + l + 0.5) or 0
+        if ready == 0 and Pending(old, now) > 0 then ready = old.ready end
+        found[cd.id] = { ready = ready, dur = spellDur or oldDur }
+      end
+    end
+  end
+  return found, read
+end
+
 function CD.ScanOwn()
   local rec = ns.MyRecord()
   if not rec or not rec.profs then return end
   local now = ns.Now()
-  local found = ReadCooldowns(rec, now)
+  local found, read = ReadCooldowns(rec, now)
   local old = rec.cds or {}
   local changed = false
   for id, e in pairs(found) do
@@ -118,7 +175,8 @@ function CD.ScanOwn()
     if not o or math.abs(Pending(o, now) - e.ready) > SAME or (e.dur > 0 and o.dur ~= e.dur) then changed = true end
   end
   for id in pairs(old) do if not found[id] then changed = true end end
-  local due = next(found) ~= nil and now - (rec.cdChecked or 0) >= CD.CHECK_EVERY
+  -- (nothing actually read: not a fresh check, so don't re-share it as one)
+  local due = read and next(found) ~= nil and now - (rec.cdChecked or 0) >= CD.CHECK_EVERY
   if changed or due then
     rec.cds = next(found) and found or nil
     rec.cdChecked = now

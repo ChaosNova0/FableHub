@@ -177,8 +177,16 @@ end
 function L.OpenAward(itemIDs)
   if not P.CanEdit("loot") then return ns.Print("Only officers can award loot.") end
   if not award then BuildAward() end
+  -- who got what is only kept when the same drops are opened again shortly
+  -- after (looting the same corpse twice); a new drop starts clean, so last
+  -- week's winner of the same item isn't shown
+  local same = award.drops and #award.drops == #itemIDs and GetTime() - (award.openedAt or 0) < 600
+  if same then
+    for i, id in ipairs(itemIDs) do if award.drops[i] ~= id then same = false break end end
+  end
+  if not same then award.awarded = {} end
   award.drops = itemIDs
-  award.awarded = award.awarded or {}
+  award.openedAt = GetTime()
   award.selectedItem = itemIDs[1]
   award.selectedCand = nil
   award:Show()

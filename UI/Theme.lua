@@ -423,8 +423,17 @@ local function CheckLine(i)
   return line
 end
 
+-- run a menu callback, then repaint unless the callback already did (pages
+-- that refresh themselves repaint an open menu as part of that): one paint per click
+local function ThenPaint(fn, ...)
+  local before = cm.paints
+  fn(...)
+  if cm.paints == before then T.PaintCheckMenu() end
+end
+
 function T.PaintCheckMenu()
   if not cm or not cm.spec then return end
+  cm.paints = (cm.paints or 0) + 1
   local spec = cm.spec
   local W = spec.width or 220
   local r, g, b = T.Accent()
@@ -439,7 +448,7 @@ function T.PaintCheckMenu()
       btn.text:SetText(spec.mode.labels[i])
       if i == sel then btn.bg:SetColorTexture(r, g, b, 0.18); btn.text:SetTextColor(r, g, b, 1)
       else btn.bg:SetColorTexture(1, 1, 1, 0); btn.text:SetTextColor(1, 1, 1, 0.5) end
-      btn:SetScript("OnClick", function() spec.mode.set(i); T.PaintCheckMenu() end)
+      btn:SetScript("OnClick", function() ThenPaint(spec.mode.set, i) end)
     end
     cm.segHolder:ClearAllPoints()
     cm.segHolder:SetPoint("TOPRIGHT", -8, y - 1)
@@ -487,7 +496,7 @@ function T.PaintCheckMenu()
       if o.checked then row.boxFill:SetColorTexture(r, g, b, 1); row.box:SetBorderColor(r, g, b, 1)
       else row.boxFill:SetColorTexture(1, 1, 1, 0); row.box:SetBorderAlpha(0.3) end
       local value = o.value
-      row.onClick = function() spec.onToggle(value); T.PaintCheckMenu() end
+      row.onClick = function() ThenPaint(spec.onToggle, value) end
       lastRow, any = true, true
     end
   end
@@ -501,7 +510,7 @@ function T.PaintCheckMenu()
   local clear = Row("Clear", 0.5)
   clear.box:Hide(); clear.count:Hide()
   clear.label:ClearAllPoints(); clear.label:SetPoint("LEFT", 10, 0)
-  clear.onClick = function() spec.onClear(); T.PaintCheckMenu() end
+  clear.onClick = function() ThenPaint(spec.onClear) end
 
   for i = ri + 1, #cm.rows do cm.rows[i]:Hide() end
   for i = li + 1, #cm.lines do cm.lines[i]:Hide() end

@@ -54,11 +54,18 @@ end
 -- Item index: names of every item we've come across (account-wide), so
 -- officers can search by name. The game has no full item search for addons.
 ------------------------------------------------------------------------
+-- running count of changes to the index (new items or renamed ones), so
+-- FindItemByName knows when to rebuild its name lookup without walking it
+local indexChanges = 0
+
 function L.IndexItem(id, name, quality)
   if not id or not name or not FableHubDB then return end
   FableHubDB.itemIndex = FableHubDB.itemIndex or {}
   local cur = FableHubDB.itemIndex[id]
-  if not cur or cur.n ~= name then FableHubDB.itemIndex[id] = { n = name, q = quality } end
+  if not cur or cur.n ~= name then
+    FableHubDB.itemIndex[id] = { n = name, q = quality }
+    indexChanges = indexChanges + 1
+  end
 end
 
 -- Returns up to `limit` item IDs matching text: an item ID, a link, or part of a name.
@@ -103,14 +110,13 @@ function L.SearchItems(text, limit)
 end
 
 -- An item with exactly this name (crafted items usually share their recipe's name)
-local byName, byNameSize = {}, -1
+local byName, byNameChanges, byNameIdx = {}, -1, nil
 function L.FindItemByName(name)
   if not name or name == "" then return nil end
   local idx = FableHubDB and FableHubDB.itemIndex or {}
-  local size = 0
-  for _ in pairs(idx) do size = size + 1 end
-  if size ~= byNameSize then
-    byName, byNameSize = {}, size
+  -- rebuild only when IndexItem changed something (or the saved table itself changed)
+  if indexChanges ~= byNameChanges or idx ~= byNameIdx then
+    byName, byNameChanges, byNameIdx = {}, indexChanges, idx
     for id, rec in pairs(idx) do
       local k = rec.n:lower()
       if not byName[k] or (rec.q or 0) > (idx[byName[k]].q or 0) then byName[k] = id end
@@ -385,7 +391,10 @@ ns.CommHandlers.M = function(sender, payload)
   local cur = all[itemID][slot]
   local ts = Enc.FromB36(f[6])
   if cur and (cur.ts or 0) >= ts then return end
-  all[itemID][slot] = { key = key, t = typ, o = tonumber(f[5]) or 1, ts = ts, by = f[7], deleted = f[8] == "1" or nil }
+  -- the order must be a plain whole number: "nan" or "inf" would break sorting the lists
+  local o = (f[5] or ""):match("^%d+$") and tonumber(f[5]) or 1
+  o = math.max(1, math.min(999, o))
+  all[itemID][slot] = { key = key, t = typ, o = o, ts = ts, by = f[7], deleted = f[8] == "1" or nil }
   ns.Fire("LOOT_CHANGED")
 end
 
@@ -423,7 +432,8 @@ function L.ItemPriorities(itemID)
     if not m.deleted then
       local isGuild = m.key:sub(1, 1) ~= "?"
       local row = { name = isGuild and ns.ShortName(m.key):lower() or m.key:sub(2), key = isGuild and m.key or nil,
-                    slotKey = m.key, order = m.o, type = m.t, manual = true,
+                    -- (m.o == m.o is false only for NaN, which older versions could store)
+                    slotKey = m.key, order = (type(m.o) == "number" and m.o == m.o) and m.o or 1, type = m.t, manual = true,
                     received = isGuild and L.Received(itemID, m.key) or nil }
       if m.t == L.TYPE_PRIO then prio[#prio + 1] = row else wish[#wish + 1] = row end
     end

@@ -30,6 +30,7 @@ B.SLOTS = 98
 B.MAX_TABS = 8
 B.STATUS = { open = "Requested", given = "Handed over", declined = "Declined", cancelled = "Cancelled" }
 B.KEEP_DONE = 7 * 86400
+B.EXPIRE_OPEN = 30 * 86400 -- open requests nobody answered are dropped after this
 
 local function G()
   local g = ns.GuildDB()
@@ -44,6 +45,13 @@ end
 B.G = G
 
 local function Safe(s) return (tostring(s or ""):gsub("[%^/;,|]", " ")) end
+
+-- a received whole number: digits only (no "nan", "inf", "-5" or "1e9"),
+-- clamped to lo..hi; anything else is `default`
+local function Num(s, lo, hi, default)
+  if type(s) ~= "string" or #s > 15 or not s:match("^%d+$") then return default end
+  return math.max(lo, math.min(hi, tonumber(s)))
+end
 
 ------------------------------------------------------------------------
 -- Permissions
@@ -235,8 +243,10 @@ local function DecodeLog(text)
   for _, part in ipairs(Enc.Split(f[5] or "", ";")) do
     local p = Enc.Split(part, "/")
     if p[1] and p[1] ~= "" and #l.entries < 100 then -- the game keeps 25 per tab
-      l.entries[#l.entries + 1] = { k = p[1], who = p[2], id = Enc.FromB36(p[3]), n = tonumber(p[4]) or 0,
-                                    at = Enc.FromB36(p[5]), from = tonumber(p[6]) or 0, to = tonumber(p[7]) or 0 }
+      -- n: item count or copper; from/to: tab numbers
+      l.entries[#l.entries + 1] = { k = p[1], who = p[2], id = Enc.FromB36(p[3]), n = Num(p[4], 0, 1e12, 0),
+                                    at = Enc.FromB36(p[5]), from = Num(p[6], 0, B.MAX_TABS, 0),
+                                    to = Num(p[7], 0, B.MAX_TABS, 0) }
     end
   end
   return tab, l
@@ -299,7 +309,9 @@ ns.CommHandlers.g = function(sender, payload)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
   local b = G()
-  local m = { ts = Enc.FromB36(f[2]), by = f[3], v = tonumber(f[4]) or 0 }
+  local v = Num(f[4], 0, 1e12) -- copper, a plain whole number
+  if not v then return end
+  local m = { ts = Enc.FromB36(f[2]), by = f[3], v = v }
   if not b or (b.money and (b.money.ts or 0) >= m.ts) or not P.RankIndex(m.by) or not ns.TimeOK(m.ts) then return end
   if b.money and not ns.FirstHand(sender, m.by) then return end -- second-hand copies only fill gaps
   b.money = m
@@ -386,6 +398,9 @@ local function Step()
   end
   reader.busy, reader.job, reader.got = true, job, false
   if job.kind == "tab" then
+    -- when we asked: a slots update right after this is still about the
+    -- previous tab (or the bank opening), not this one (see Got)
+    reader.queriedAt, job.recheck = GetTime(), nil
     if QueryGuildBankTab then QueryGuildBankTab(job.tab) end
   else
     if QueryGuildBankLog then QueryGuildBankLog(job.tab == 0 and (B.MAX_TABS + 1) or job.tab) end
@@ -396,14 +411,21 @@ local function Step()
   end)
 end
 
+-- returns true when the tab should be read again before trusting it
 local function Finish(job)
   local b = G()
   if not b or not job then return end
   local me = ns.MyKey()
   if job.kind == "tab" then
-    local items = ReadTab(job.tab)
+    local items, count = ReadTab(job.tab)
     local t = { name = job.name or ("Tab " .. job.tab), icon = job.icon, items = items, by = me }
     local cur = b.tabs[job.tab]
+    -- an empty read of a tab we have items for is usually a reply that hadn't
+    -- arrived yet: only believe it once a second read agrees
+    if count == 0 and cur and next(cur.items or {}) and not job.emptyOnce then
+      job.emptyOnce = true
+      return true
+    end
     if not cur or EncodeTab(job.tab, { name = cur.name, icon = cur.icon, items = cur.items })
                 ~= EncodeTab(job.tab, { name = t.name, icon = t.icon, items = items }) then
       t.ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1)
@@ -436,7 +458,9 @@ function B.ReadMoney()
 end
 
 function B.OnOpen()
-  if not IsInGuild() then return end
+  -- GUILDBANKFRAME_OPENED and PLAYER_INTERACTION_MANAGER_FRAME_SHOW can both
+  -- fire for one visit: read once
+  if not IsInGuild() or reader.open then return end
   reader.open = true
   if P.IsGuildMaster() then pcall(B.ReadPermissions) end
   reader.queue = {}
@@ -455,10 +479,21 @@ end
 local function Got(kind)
   local job = reader.job
   if not reader.open or not job or job.kind ~= kind or reader.got then return end
+  -- the event doesn't say which tab: one arriving within ~0.2 s of our query
+  -- is the reply for an earlier tab, not the one we just asked for. Look
+  -- again shortly in case it was ours after all (or ours came at once).
+  if kind == "tab" and GetTime() - (reader.queriedAt or 0) < 0.15 then
+    if not job.recheck then
+      job.recheck = true
+      C_Timer.After(0.25, function() if reader.job == job and not reader.got then Got(kind) end end)
+    end
+    return
+  end
   reader.got = true
   C_Timer.After(0.3, function()
     if reader.job ~= job then return end
-    Finish(job)
+    -- an empty read to double-check goes to the front of the queue again
+    if Finish(job) then table.insert(reader.queue, 1, job) end
     reader.job = nil
     Step()
   end)
@@ -528,12 +563,20 @@ end
 local function DecodeReq(text)
   local f = Enc.Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" or not B.STATUS[f[7] or ""] then return nil end
-  return { id = f[2], by = f[3], item = Enc.FromB36(f[4]), qty = math.max(1, tonumber(f[5]) or 1),
+  return { id = f[2], by = f[3], item = Enc.FromB36(f[4]), qty = Num(f[5], 1, 999, 1), -- as B.Request allows
            note = f[6] ~= "" and f[6] or nil, status = f[7], ts = Enc.FromB36(f[8]), actor = f[9],
            created = Enc.FromB36(f[10]) }
 end
 
 B.DecodeReq = DecodeReq -- for the officer change log
+
+-- what was asked, by whom and when: fixed once posted (officers and the
+-- requester only move the status along). Compared as sent, since EncodeReq
+-- blanks some characters.
+local function SameAsk(old, new)
+  return Safe(old.by) == Safe(new.by) and (old.item or 0) == (new.item or 0) and (old.qty or 1) == (new.qty or 1)
+    and (old.created or 0) == (new.created or 0) and Safe(old.note) == Safe(new.note)
+end
 
 local function Allowed(old, new, relayed)
   local actor = new.actor
@@ -543,12 +586,19 @@ local function Allowed(old, new, relayed)
     -- we missed the earlier steps (caught up from a relay): trust the requester or an officer
     return relayed and (actor == new.by or P.IsOfficer(actor, "bankreq")) and P.IsOfficer(new.by, "bankask") or false
   end
+  if not SameAsk(old, new) then return false end
   if P.IsOfficer(actor, "bankreq") then return true end
-  return actor == old.by and (new.status == "cancelled" or new.status == "open")
+  -- the requester: cancel, or reopen what they cancelled (not what an officer
+  -- declined or gave)
+  if actor ~= old.by then return false end
+  return new.status == "cancelled" or (new.status == "open" and old.status == "cancelled")
 end
 
+-- done with: handled a week ago, or still open a month after it was asked
+-- (nobody is going to hand it over now, and it shouldn't sync forever)
 local function Finished(r)
-  return r.status ~= "open" and ns.Now() - (r.ts or 0) > B.KEEP_DONE
+  if r.status == "open" then return ns.Now() - (r.created or r.ts or 0) > B.EXPIRE_OPEN end
+  return ns.Now() - (r.ts or 0) > B.KEEP_DONE
 end
 
 local function ApplyReq(r, silent)
@@ -619,36 +669,58 @@ function B.OpenCount()
   return n
 end
 
-local MAX_OPEN = 10 -- open bank requests per member, so nobody can flood the officers
-ns.CommHandlers.q = function(sender, payload)
+local MAX_OPEN = 10  -- open bank requests per member, so nobody can flood the officers
+local MAX_TOTAL = 30 -- and requests of any kind (handled ones are kept a week)
+local function HandleReq(sender, payload, replayed)
   local r = DecodeReq(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
   -- requesters must be guild members, so made-up names can't get round MAX_OPEN
   if next(ns.roster) and not ns.roster[r.by] then return end
   local b = G()
   local old = b and b.requests[r.id]
-  if not old then
-    local n = 0
-    for _, x in pairs(b and b.requests or {}) do if x.by == r.by and x.status == "open" then n = n + 1 end end
-    if n >= MAX_OPEN then return end
+  -- (a cancelled request opened again counts as a new open one)
+  if not old or (r.status == "open" and old.status ~= "open") then
+    local open, total = 0, 0
+    for _, x in pairs(b and b.requests or {}) do
+      if x.by == r.by then
+        total = total + 1
+        if x.status == "open" then open = open + 1 end
+      end
+    end
+    if open >= MAX_OPEN or (not old and total >= MAX_TOTAL) then return end
   end
   -- the actor must be the sender (or the sender an officer); copies passed on
   -- by other members during catch-up only fill in requests we don't have yet
-  if not ns.FirstHand(sender, r.actor) and old then return end
+  if not ns.FirstHand(sender, r.actor, "bankreq") then
+    if old then return end
+    -- a request we never saw, open or handled: only from the member answering
+    -- our catch-up (so nobody can ask in someone else's name, or hand things
+    -- over in an officer's)
+    if not replayed then
+      if not ns.RelayGate(sender, "d", function() HandleReq(sender, payload, true) end) then return end
+    end
+  end
   ApplyReq(r)
 end
+ns.CommHandlers.q = function(sender, payload) HandleReq(sender, payload, false) end
 
 ------------------------------------------------------------------------
 -- Catch-up
 ------------------------------------------------------------------------
+-- requests catch-up passes on: not finished, and (once the roster has loaded)
+-- from guild members only, since others refuse the rest
+local function Shared(r)
+  return not Finished(r) and (not next(ns.roster) or ns.roster[r.by] ~= nil)
+end
+
 function B.SendDigest()
   local b = G()
   if not b then return end
   local parts = { "m=" .. Enc.ToB36(b.money and b.money.ts or 0), "p=" .. Enc.ToB36(b.perm and b.perm.ts or 0) }
-  -- count only requests catch-up passes on (not finished ones), so the counts can match
+  -- count only requests catch-up passes on, so the counts can match
   local maxTs, n = 0, 0
   for _, r in pairs(b.requests) do
-    if not Finished(r) then n = n + 1 end
+    if Shared(r) then n = n + 1 end
     if (r.ts or 0) > maxTs then maxTs = r.ts end
   end
   parts[#parts + 1] = "q=" .. Enc.ToB36(maxTs) .. "." .. n
@@ -683,9 +755,9 @@ local function HandleDigest(sender, payload, retried)
   local qTs, qN = (theirs.q or ""):match("^(%w+)%.(%d+)$")
   qTs, qN = Enc.FromB36(qTs), tonumber(qN) or 0
   local n = 0
-  for _, r in pairs(b.requests) do if not Finished(r) then n = n + 1 end end
+  for _, r in pairs(b.requests) do if Shared(r) then n = n + 1 end end
   for _, r in pairs(b.requests) do
-    if (qN < n or (r.ts or 0) > qTs) and not Finished(r) then ns.SendTo(sender, "q", EncodeReq(r)) end
+    if (qN < n or (r.ts or 0) > qTs) and Shared(r) then ns.SendTo(sender, "q", EncodeReq(r)) end
   end
   for tab, t in pairs(b.tabs) do
     if (t.ts or 0) > Ts("t" .. tab) then Distribute(tab, "t", EncodeTab(tab, t), sender) end
@@ -698,11 +770,26 @@ ns.CommHandlers.d = function(sender, payload) HandleDigest(sender, payload, fals
 
 ns.RegisterDigest(function() B.SendDigest() end)
 
--- tidy finished requests
+-- tidy finished (and long-unanswered) requests, and those of members who
+-- have left the guild: only with a loaded roster, and not if it would drop
+-- most of them (a roster that's still filling in must not wipe them; as
+-- Alts.PruneLeft)
 ns.On("LOGIN", function()
   C_Timer.After(50, function()
     local b = G()
     if not b then return end
-    for id, r in pairs(b.requests) do if Finished(r) then b.requests[id] = nil end end
+    local roster = next(ns.roster) and IsInGuild() and ns.roster
+    local left, total = {}, 0
+    for id, r in pairs(b.requests) do
+      if Finished(r) then
+        b.requests[id] = nil
+      else
+        total = total + 1
+        if roster and not roster[r.by] then left[#left + 1] = id end
+      end
+    end
+    if #left > 0 and #left * 2 <= total then
+      for _, id in ipairs(left) do b.requests[id] = nil end
+    end
   end)
 end)

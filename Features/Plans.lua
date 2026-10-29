@@ -277,7 +277,7 @@ function P.NightPeople(plan)
   local E = ns.Events
   if not plan or not plan.night or not E then return out end
   for signer, su in pairs(E.Signups(plan.night)) do
-    local key = su.char or signer
+    local key = E.SignupChar(signer, su)
     if su.status and su.status ~= "R" then
       out.status[key] = su.status
       out.role[key] = su.role

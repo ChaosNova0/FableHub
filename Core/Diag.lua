@@ -49,8 +49,8 @@ function D.NoteRecv(raw, channel, prefix)
 end
 
 ------------------------------------------------------------------------
--- Ping: whisper a guildmate's FableHub and wait for its answer (on the guild
--- channel, so the answer arrives even if whispers to us don't work)
+-- Ping: whisper a guildmate's FableHub and wait for its answer (by whisper;
+-- older versions answer on the guild channel, which is accepted too)
 ------------------------------------------------------------------------
 local pings = {}   -- [id] = { key, form, sent, got }
 D.lastPing = nil   -- { target, results = { {form, seconds or nil} } }
@@ -130,8 +130,11 @@ ns.On("WHISPER_FAILED", function(key, form)
   end
 end)
 
--- someone pinged us: answer on the guild channel
-ns.CommHandlers.e = function(sender, payload)
+-- someone pinged us: answer by whisper. Pings only count when they came by
+-- whisper (what a ping tests), so a ping on the guild channel can't make every
+-- FableHub user in the guild answer at once.
+ns.CommHandlers.e = function(sender, payload, channel)
+  if channel ~= "WHISPER" then return end
   local id = (payload or ""):match("^(%w+)$")
   if not id then return end
   -- one ping tries several spellings at once: answer up to 10 per 10 seconds per person
@@ -140,7 +143,7 @@ ns.CommHandlers.e = function(sender, payload)
   if not a or now - a.t > 10 then a = { t = now, n = 0 }; answered[sender] = a end
   if a.n >= 10 then return end
   a.n = a.n + 1
-  ns.Send("f", id)
+  ns.SendTo(sender, "f", id)
 end
 ns.CommHandlers.f = function(sender, payload)
   local p = pings[(payload or ""):match("^(%w+)$") or ""]

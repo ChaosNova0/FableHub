@@ -159,6 +159,8 @@ end
 
 -- the FableHub raid night starting within 2 hours of the event, if any
 function RH.FindNight(ev)
+  -- (a weekly night repeats forever: a wrong year would still match one)
+  if RH.Unrealistic(ev) then return nil end
   local best, bestDiff
   for _, occ in ipairs(ns.Events.Occurrences(ev.start - 3 * 3600, ev.start + 3 * 3600)) do
     local diff = math.abs(occ.start - ev.start)

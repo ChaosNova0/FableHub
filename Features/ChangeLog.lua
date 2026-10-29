@@ -51,6 +51,11 @@ end
 
 local D = {}
 
+-- the feature a change's author (`by`) must have for a received change to be
+-- logged (nil = officer / Guild Master); see Observe
+local FEATURE = { P = "plans", V = "raids", O = "raids", B = "loot", M = "loot", L = "loot", Z = "announce",
+                  X = "alts", q = "bankreq" }
+
 -- feature permissions (Guild Master)
 D.c = function(payload)
   local d = P.DecodePerms(payload)
@@ -134,9 +139,13 @@ end
 D.X = function(payload)
   local char, e = ns.Alts.Decode(payload)
   if not char or not e.manual then return nil end
-  local text = (e.main == char) and ("unlinked " .. ns.ShortName(char))
+  -- a character set as its own main is an unlink, or the set-up A.Link sends
+  -- for the main before linking alts to it: weak, so merging with a link
+  -- keeps the "linked" text (see CL.Add)
+  local weak = e.main == char
+  local text = weak and ("unlinked " .. ns.ShortName(char))
     or ("linked " .. ns.ShortName(char) .. " to " .. ns.ShortName(e.main))
-  return { id = "X" .. char .. "@" .. e.ts, key = "alts", ts = e.ts, by = e.by, text = text }
+  return { id = "X" .. char .. "@" .. e.ts, key = "alts", ts = e.ts, by = e.by, text = text, weak = weak or nil }
 end
 
 -- guild bank requests handed over or declined by an officer
@@ -164,13 +173,20 @@ function CL.Add(e)
     if x.key == e.key and x.by == e.by and math.abs((x.ts or 0) - e.ts) <= CL.MERGE then
       x.ids[e.id] = true
       x.n = (x.n or 1) + 1
-      if e.ts >= x.ts then x.ts, x.text, x.item = e.ts, e.text, e.item end
+      -- the newest change's text, except that a weak one ("unlinked" set-up)
+      -- never replaces a real one, and a real one always replaces a weak one
+      local newer = e.ts >= (x.ts or 0)
+      if (newer and not (e.weak and not x.weak)) or (x.weak and not e.weak) then
+        x.text, x.item, x.weak = e.text, e.item, e.weak
+      end
+      if newer then x.ts = e.ts end
       table.sort(list, function(a, b) return (a.ts or 0) > (b.ts or 0) end)
       ns.Fire("CHANGELOG_CHANGED")
       return
     end
   end
-  table.insert(list, { ts = e.ts, by = e.by, text = e.text, key = e.key, item = e.item, n = 1, ids = { [e.id] = true } })
+  table.insert(list, { ts = e.ts, by = e.by, text = e.text, key = e.key, item = e.item, weak = e.weak, n = 1,
+                       ids = { [e.id] = true } })
   table.sort(list, function(a, b) return (a.ts or 0) > (b.ts or 0) end)
   while #list > CL.MAX do table.remove(list) end
   ns.Fire("CHANGELOG_CHANGED")
@@ -183,14 +199,19 @@ local function Observe(msgType, payload, mine)
   if not ok or not e then return end
   -- our own messages: only changes we just made (not old data we pass on in catch-up)
   if mine and (e.by ~= ns.MyKey() or e.ts < ns.Now() - 120) then return end
+  -- others': only straight from the officer who made the change, or passed on
+  -- by an officer. Features accept some second-hand copies from members to
+  -- fill gaps; those mustn't put lines in an officer's name into the log.
+  if not mine and not ns.OfficerSent(ns.receivingSender, e.by, FEATURE[msgType]) then return end
   CL.Add(e)
 end
 
--- others' changes: Comm.lua notes which message is being handled (ns.receiving),
--- and each feature fires its "changed" event only when it accepts the change
+-- others' changes: Comm.lua notes which message is being handled (ns.receiving,
+-- and who it came from: ns.receivingSender), and each feature fires its
+-- "changed" event only when it accepts the change
 for _, event in ipairs({ "PLANS_CHANGED", "EVENTS_CHANGED", "LOOT_CHANGED", "ANNOUNCE_CHANGED", "ALTS_CHANGED", "BANK_CHANGED" }) do
   ns.On(event, function()
-    if ns.receiving then Observe(ns.receiving, ns.receivingPayload, false) end
+    if ns.receiving and ns.receivingSender then Observe(ns.receiving, ns.receivingPayload, false) end
   end)
 end
 

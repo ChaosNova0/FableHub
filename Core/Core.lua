@@ -146,7 +146,7 @@ function ns.SetMyKey(newKey)
   local rec = chars[newKey]
   if rec then
     rec.key = newKey
-    rec.ts = ns.Now()
+    rec.ts = math.max(ns.Now(), (rec.ts or 0) + 1) -- never backwards
   end
   for _, g in pairs(FableHubDB.guilds) do
     if oldKey then g.members[oldKey] = nil; g.addonUsers[oldKey] = nil end
@@ -254,12 +254,31 @@ function ns.MyRecord()
   return rec
 end
 
--- Store a record received from someone else. Returns true if it was newer.
+-- Store a record received from someone else. Returns true if it was newer
+-- (or brought cooldowns our copy of that version lacked).
 function ns.StoreRecord(rec)
   local g = ns.GuildDB()
   if not g or not rec or not rec.key then return false end
   local old = g.members[rec.key]
-  if old and (old.ts or 0) >= (rec.ts or 0) then return false end
+  if old and (old.ts or 0) == (rec.ts or 0) then
+    -- the same version: clients pass records on with only the cooldowns they
+    -- know (0.21: none; later versions add more), so a copy only fills in
+    -- cooldowns ours lacks and never wipes or changes the ones we have
+    local added = false
+    for id, e in pairs(rec.cds or {}) do
+      if not (old.cds and old.cds[id]) then
+        old.cds = old.cds or {}
+        old.cds[id] = e
+        added = true
+      end
+    end
+    if added then
+      old.cdChecked = math.max(old.cdChecked or 0, rec.cdChecked or 0)
+      ns.Fire("DATA_CHANGED")
+    end
+    return added
+  end
+  if old and (old.ts or 0) > (rec.ts or 0) then return false end
   g.members[rec.key] = rec
   if old and ns.Activity then pcall(ns.Activity.Compare, rec.key, old, rec, rec.ts) end
   ns.Fire("DATA_CHANGED")

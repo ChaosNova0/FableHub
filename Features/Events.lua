@@ -44,10 +44,13 @@ function E.ParseOcc(occId)
   return id, tonumber(a), tonumber(n)
 end
 
+-- only the id E.Occurrences itself builds ("<id>@1.0", not "<id>@01.0" or
+-- "<id>@1.00"), so one raid night can't be signed up to under many ids
 function E.Occ(occId)
   local id, a, n = E.ParseOcc(occId)
+  if not a or id .. "@" .. tostring(a) .. "." .. tostring(n) ~= occId then return nil end
   local ev = E.Get(id)
-  if not ev or ev.deleted or not a or not ev.anchors[a] then return nil end
+  if not ev or ev.deleted or not ev.anchors[a] then return nil end
   if n > 0 and not ev.weekly then return nil end
   local start = ev.anchors[a] + n * WEEK
   return { id = occId, event = ev, start = start, finish = start + (ev.duration or 180) * 60,
@@ -173,7 +176,7 @@ function E.OfficerSet(occId, key, changes)
   local g = G()
   g.signups[occId] = g.signups[occId] or {}
   local cur = g.signups[occId][key]
-  local s = { status = cur and cur.status or "A", char = cur and cur.char or key, role = cur and cur.role,
+  local s = { status = cur and cur.status or "A", char = cur and E.SignupChar(key, cur) or key, role = cur and cur.role,
               note = cur and cur.note or "" }
   if changes.status then s.status = changes.status end
   if changes.role ~= nil then s.role = changes.role or nil end
@@ -181,6 +184,7 @@ function E.OfficerSet(occId, key, changes)
   if not cur and not changes.status then s.status = "A" end
   s.ts = math.max(ns.Now(), (cur and cur.ts or 0) + 1)
   s.src = "o:" .. (ns.MyKey() or "")
+  s.off = true -- (local only: the character stands as set, see E.SignupChar)
   g.signups[occId][key] = s
   ns.Send("S", EncodeSignup(occId, key, s))
   ns.Fire("EVENTS_CHANGED")
@@ -248,11 +252,25 @@ function E.ResolveKey(name)
   for k in pairs(ns.roster) do
     if ns.ShortName(k) == short then return k end
   end
-  -- Forever last names: raid roster may only give the first name
-  local first = short:match("^(%S+)")
-  for k in pairs(ns.roster) do
-    if ns.ShortName(k):match("^(%S+)") == first then return k end
+  -- Forever puts the last name where the realm goes ("Anna-Smith"): try it
+  -- as "Anna Smith"
+  local base, tail = name:match("^([^-]+)%-(.+)$")
+  if base then
+    local full = ns.NormalizeName(base .. " " .. tail)
+    if full and ns.roster[full] then return full end
   end
+  -- Forever last names: raid roster may only give the first name. Only for a
+  -- bare first name, and only when exactly one guild member has it (two
+  -- "Anna"s must not credit the wrong one)
+  if short:find(" ", 1, true) then return nil end
+  local found
+  for k in pairs(ns.roster) do
+    if ns.ShortName(k):match("^(%S+)") == short then
+      if found then return nil end
+      found = k
+    end
+  end
+  return found
 end
 
 -- author = the officer who recorded it (relays pass it on, so non-officers can relay)
@@ -263,7 +281,14 @@ local function EncodeAttendance(occId, a)
   return table.concat({ "1", occId, a.by or ns.MyKey() or "", Enc.ToB36(a.ts), table.concat(parts, ",") }, "^")
 end
 
-local lastBroadcast = {}
+-- GetRaidRosterInfo's name, or nil for a raider who's offline (8th return).
+-- Without an 8th return at all, treat them as online.
+local function NameIfOnline(...)
+  if select("#", ...) >= 8 and not select(8, ...) then return nil end
+  return (...)
+end
+
+local lastBroadcast, finalSent = {}, {}
 local function RecordTick()
   if not IsInGuild() or not P.CanEdit("raids") then return end
   if not (IsInRaid and IsInRaid()) then return end
@@ -273,14 +298,24 @@ local function RecordTick()
   a.by = ns.MyKey()
   local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
   for i = 1, n do
-    local name = GetRaidRosterInfo(i)
-    local key = E.ResolveKey(name)
+    -- offline raiders still hold their spot but aren't attending
+    local name = NameIfOnline(GetRaidRosterInfo(i))
+    local key = name and E.ResolveKey(name)
     if key then a.min[key] = (a.min[key] or 0) + 1 end
   end
   a.ts = ns.Now()
-  -- share every 10 minutes and once more as the night ends
+  -- share every 10 minutes while the night runs, and once more as it ends
+  -- (E.Active keeps the night for 15 minutes after its finish: one final
+  -- broadcast, not one a minute)
   local now = ns.Now()
-  if now - (lastBroadcast[occ.id] or 0) >= 600 or now >= occ.finish then
+  local send
+  if now >= occ.finish then
+    send = not finalSent[occ.id]
+    finalSent[occ.id] = true
+  else
+    send = now - (lastBroadcast[occ.id] or 0) >= 600
+  end
+  if send then
     lastBroadcast[occ.id] = now
     ns.Send("A", EncodeAttendance(occ.id, a))
   end
@@ -329,50 +364,128 @@ ns.CommHandlers.V = function(sender, payload)
   ns.Fire("EVENTS_CHANGED")
 end
 
-local function HandleSignup(sender, payload, retried)
+-- Sign-ups are taken for weekly nights from last week's up to 8 weeks ahead
+-- (n counts weeks from the anchor), so nobody can fill saved data with
+-- sign-ups to far-off weeks. One-off nights have a single occurrence.
+local SIGNUP_WEEKS_BACK, SIGNUP_WEEKS_AHEAD = 1, 8
+local function SignupOcc(occId)
+  local occ = E.Occ(occId)
+  if not occ then return nil end
+  if occ.event.weekly then
+    local _, a, n = E.ParseOcc(occId)
+    local week = math.floor((ns.Now() - occ.event.anchors[a]) / WEEK)
+    if n < week - SIGNUP_WEEKS_BACK or n > week + SIGNUP_WEEKS_AHEAD then return nil end
+  end
+  return occ
+end
+
+-- raid nights (within the window above) one member has a sign-up for
+local MAX_SIGNUPS = 40
+local function SignupCount(g, signer)
+  local n = 0
+  for occId, list in pairs(g.signups) do
+    if list[signer] and SignupOcc(occId) then n = n + 1 end
+  end
+  return n
+end
+
+-- The character a sign-up is for. Members may sign up as one of their own
+-- linked characters; the character is stored as sent and checked here, when
+-- it's used, against the alt links as they are now (links can arrive after
+-- the sign-up). One we can't tell is theirs counts as the signer.
+function E.SignupChar(signer, s)
+  local char = s and s.char
+  if not char or char == "" or char == signer then return signer end
+  if s.off then return char end -- an officer's change (see OfficerSet / HandleSignup)
+  -- my own sign-ups: both characters on this account
+  if FableHubDB.chars[signer] and FableHubDB.chars[char] then return char end
+  -- (links we only have from a catch-up relay don't count: see Alts.lua)
+  local A = ns.Alts
+  if A and A.MainOf(char, true) == A.MainOf(signer, true) then return char end
+  return signer
+end
+
+-- Someone sent a newer "copy" of our own sign-up (forged, or stale): send our
+-- real one again, newer. At most once per raid night per FIX_GAP seconds; a
+-- copy arriving in between gets one more answer when the gap is over.
+local FIX_GAP = 300
+local fixedAt, fixWaiting = {}, {}
+local function FixMine(occId, theirTs)
+  local now = GetTime()
+  local last = fixedAt[occId]
+  if last and now - last < FIX_GAP then
+    local waiting = fixWaiting[occId]
+    if not waiting then
+      C_Timer.After(FIX_GAP - (now - last) + 1, function()
+        local t = fixWaiting[occId]
+        fixWaiting[occId] = nil
+        if t then FixMine(occId, t) end
+      end)
+    end
+    if not waiting or theirTs > waiting then fixWaiting[occId] = theirTs end
+    return
+  end
+  local g, me = G(), ns.MyKey()
+  if not g or not me or not SignupOcc(occId) then return end
+  local mine = g.signups[occId] and g.signups[occId][me]
+  if mine and (mine.ts or 0) > theirTs then return end -- changed it ourselves since: already sent
+  fixedAt[occId] = now
+  local fix = mine and {} or { status = "R", char = me }
+  for k, v in pairs(mine or {}) do fix[k] = v end
+  fix.ts = theirTs + 1
+  g.signups[occId] = g.signups[occId] or {}
+  g.signups[occId][me] = fix
+  ns.Send("S", EncodeSignup(occId, me, fix))
+end
+
+local function HandleSignup(sender, payload, replayed)
   local f = Enc.Split(payload, "^")
   if f[1] ~= "1" then return end
   local occId, signer, ts, status = f[2], f[3], Enc.FromB36(f[4]), f[5]
   if not occId or not signer or not (E.STATUS[status] or status == "R") or not ns.TimeOK(ts) then return end
   local g = G()
   if not g then return end
+  -- only for raid nights we know, in the sign-up window (no made-up
+  -- occurrences piling up in saved data; catch-up sends them again once the
+  -- night itself has arrived)
+  if not SignupOcc(occId) then return end
   -- we're authoritative for our own sign-up, except officers importing from Raid-Helper.
   -- A newer "copy" from anyone else (forged, or stale) gets our real answer sent again.
   if signer == ns.MyKey() and not P.IsOfficer(sender, "raids") then
     local mine = g.signups[occId] and g.signups[occId][signer]
-    if ts >= (mine and mine.ts or 0) and E.Occ(occId) then
-      local fix = mine and {} or { status = "R", char = signer }
-      for k, v in pairs(mine or {}) do fix[k] = v end
-      fix.ts = ts + 1
-      g.signups[occId] = g.signups[occId] or {}
-      g.signups[occId][signer] = fix
-      ns.Send("S", EncodeSignup(occId, signer, fix))
-    end
+    if ts >= (mine and mine.ts or 0) then FixMine(occId, ts) end
     return
   end
   -- guild members only, so made-up names don't pile up in saved data
   if next(ns.roster) and not ns.roster[signer] then return end
-  g.signups[occId] = g.signups[occId] or {}
-  local cur = g.signups[occId][signer]
+  local cur = g.signups[occId] and g.signups[occId][signer]
   if cur and (cur.ts or 0) >= ts then return end
+  -- a sign-up to a night they had none for: up to MAX_SIGNUPS nights each
+  if not cur and SignupCount(g, signer) >= MAX_SIGNUPS then return end
   -- only the player themselves or an officer can change a sign-up; copies passed
   -- on by other members (catch-up) only fill in sign-ups we don't have yet, and
   -- only from the member answering our catch-up (so nobody can answer for
   -- everyone who hasn't signed up)
   if not ns.FirstHand(sender, signer, "raids") then
     if cur then return end
-    local relay = ns.IsMyRelay(sender)
-    if relay == nil and not retried then -- their hello hasn't reached us yet
-      C_Timer.After(10, function() HandleSignup(sender, payload, true) end)
-      return
+    if not replayed then
+      if not ns.RelayGate(sender, "Y", function() HandleSignup(sender, payload, true) end) then return end
     end
-    if not relay then return end
   end
   local role = f[7]
   if role == "" or not ns.ROLE_NAMES[role] then role = nil end
-  local char = (f[6] ~= "" and f[6] or signer):sub(1, 64)
+  -- the character as sent, if it's a guild member: whether it's theirs is
+  -- checked when it's used (E.SignupChar), since their alt links may reach
+  -- us later. (Rewriting it here would store something other than what
+  -- everyone else holds under the same timestamp.)
+  local char = f[6] ~= "" and f[6]:sub(1, 64) or signer
+  if char ~= signer and next(ns.roster) and not ns.roster[char] then char = signer end
+  local src = (f[9] and f[9] ~= "") and f[9]:sub(1, 70) or nil
+  -- an officer's own change, sent by that officer: the character stands as set
+  local off = src ~= nil and src == "o:" .. sender and P.IsOfficer(sender, "raids") and ns.FirstHand(sender, sender)
+  g.signups[occId] = g.signups[occId] or {}
   g.signups[occId][signer] = { status = status, char = char, role = role, note = (f[8] or ""):sub(1, 60), ts = ts,
-                               src = (f[9] and f[9] ~= "") and f[9]:sub(1, 70) or nil }
+                               src = src, off = off or nil }
   ns.Fire("EVENTS_CHANGED")
 end
 ns.CommHandlers.S = function(sender, payload) HandleSignup(sender, payload, false) end
@@ -408,6 +521,23 @@ ns.CommHandlers.O = function(sender, payload)
   ns.Fire("EVENTS_CHANGED")
 end
 
+-- sign-ups catch-up passes on: only guild members' (once the roster has
+-- loaded), since others refuse the rest and the counts would never match
+local function Shared(signer)
+  return not next(ns.roster) or ns.roster[signer] ~= nil
+end
+
+local function SignupStats(list)
+  local maxTs, n = 0, 0
+  for signer, s in pairs(list) do
+    if Shared(signer) then
+      n = n + 1
+      if (s.ts or 0) > maxTs then maxTs = s.ts end
+    end
+  end
+  return maxTs, n
+end
+
 -- catch-up digest: events, sign-ups per occurrence, attendance per occurrence
 function E.SendDigest()
   local g = G()
@@ -415,8 +545,7 @@ function E.SendDigest()
   local parts = {}
   for id, ev in pairs(g.events) do parts[#parts + 1] = "e:" .. Safe(id) .. "=" .. Enc.ToB36(ev.ts or 0) end
   for occId, list in pairs(g.signups) do
-    local maxTs, n = 0, 0
-    for _, s in pairs(list) do n = n + 1; if (s.ts or 0) > maxTs then maxTs = s.ts end end
+    local maxTs, n = SignupStats(list)
     parts[#parts + 1] = "s:" .. occId .. "=" .. Enc.ToB36(maxTs) .. "." .. n
   end
   for occId, a in pairs(g.attendance) do parts[#parts + 1] = "a:" .. occId .. "=" .. Enc.ToB36(a.ts or 0) end
@@ -439,13 +568,18 @@ ns.CommHandlers.Y = function(sender, payload)
     if officer and Enc.FromB36(theirs["e:" .. id]) < (ev.ts or 0) then ns.Send("V", E.EncodeEvent(ev)) end
   end
   for occId, list in pairs(g.signups) do
-    local maxTs, n = 0, 0
-    for _, s in pairs(list) do n = n + 1; if (s.ts or 0) > maxTs then maxTs = s.ts end end
-    local t = theirs["s:" .. occId]
-    local tTs, tN = 0, 0
-    if t then local a, b = t:match("^(%w+)%.(%d+)$"); tTs, tN = Enc.FromB36(a), tonumber(b) or 0 end
-    if member and (tTs < maxTs or tN < n) then
-      for signer, s in pairs(list) do ns.Send("S", EncodeSignup(occId, signer, s)) end
+    -- (sign-ups for nights that no longer exist, or outside the sign-up window,
+    -- are refused, so skip them too)
+    if member and SignupOcc(occId) then
+      local maxTs, n = SignupStats(list)
+      local t = theirs["s:" .. occId]
+      local tTs, tN = 0, 0
+      if t then local a, b = t:match("^(%w+)%.(%d+)$"); tTs, tN = Enc.FromB36(a), tonumber(b) or 0 end
+      if tTs < maxTs or tN < n then
+        for signer, s in pairs(list) do
+          if Shared(signer) then ns.Send("S", EncodeSignup(occId, signer, s)) end
+        end
+      end
     end
   end
   for occId, a in pairs(g.attendance) do
@@ -614,7 +748,8 @@ end
 
 -- Returns minutes, or nil. Accepts 3h, 2h30, 2h 30m, 2:30, 90m, 2.5h, 150 (minutes) and 3 (hours).
 function E.ParseDuration(text)
-  local s = (text or ""):lower():gsub("%s+", ""):gsub("hours?", "h"):gsub("hrs?", "h"):gsub("mins?", "m"):gsub("minutes?", "m")
+  -- longest words first: "mins?" would turn "minutes" into "mutes"
+  local s = (text or ""):lower():gsub("%s+", ""):gsub("hours?", "h"):gsub("hrs?", "h"):gsub("minutes?", "m"):gsub("mins?", "m")
   if s == "" then return nil end
   local total
   local h, m = s:match("^(%d+)h(%d*)m?$")

@@ -119,21 +119,47 @@ local function Decode(text)
   local f = Enc.Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" or not R.STATUS[f[10] or ""] then return nil end
   local recipe, item, prof = Enc.FromB36(f[4]), Enc.FromB36(f[5]), Enc.FromB36(f[6])
+  -- (names are shown in chat: no formatting codes)
+  local by, claimer, actor = (f[3] or ""):gsub("|", ""), (f[11] or ""):gsub("|", ""), (f[14] or ""):gsub("|", "")
+  -- a claimer must be a guild member (once the roster has loaded)
+  if claimer ~= "" and next(ns.roster) and not ns.roster[claimer] and claimer ~= ns.MyKey() then return nil end
   return {
-    id = f[2], by = f[3], recipe = recipe > 0 and recipe or nil, item = item > 0 and item or nil, prof = prof > 0 and prof or nil,
+    id = f[2], by = by, recipe = recipe > 0 and recipe or nil, item = item > 0 and item or nil, prof = prof > 0 and prof or nil,
     qty = math.max(1, math.min(99, tonumber(f[7]) or 1)), mats = R.MATS[f[8]] and f[8] or "none",
     note = f[9] ~= "" and f[9]:sub(1, 80) or nil,
-    status = f[10], claimer = f[11] ~= "" and f[11] or nil, created = Enc.FromB36(f[12]), ts = Enc.FromB36(f[13]),
-  }, f[14]
+    status = f[10], claimer = claimer ~= "" and claimer or nil, created = Enc.FromB36(f[12]), ts = Enc.FromB36(f[13]),
+  }, f[14] and actor or nil
+end
+
+-- who asked, for what, and when: fixed once posted, for everyone. Compared as
+-- sent, since Encode blanks ^ and |.
+local function SameRequest(old, new)
+  return Safe(old.by) == Safe(new.by) and (old.recipe or 0) == (new.recipe or 0) and (old.prof or 0) == (new.prof or 0)
+    and (old.item or 0) == (new.item or 0) and (old.created or 0) == (new.created or 0)
+end
+
+-- the rest of the ask (amount, mats, note): only the requester may change it
+-- (claimers and officers just move it along)
+local function SameAsk(old, new)
+  return SameRequest(old, new) and (old.qty or 1) == (new.qty or 1) and (old.mats or "none") == (new.mats or "none")
+    and Safe(old.note):sub(1, 80) == Safe(new.note):sub(1, 80)
 end
 
 local function Allowed(old, new, actor)
   if not actor or actor == "" then return false end
   if not old then return actor == new.by and new.status == "open" end -- only the requester posts
+  if not SameRequest(old, new) then return false end
+  -- requester: edit amount/mats/note, cancel, mark done, un-claim (but not
+  -- claim it in someone else's name)
+  if actor == old.by then return new.claimer == nil or new.claimer == old.claimer end
+  if not SameAsk(old, new) then return false end
   if P.IsOfficer(actor, "crafts") then return true end
-  if actor == old.by then return true end -- requester: edit, cancel, mark done, un-claim
   if actor == new.claimer and old.status == "open" and (new.status == "claimed" or new.status == "done") then return true end
-  if old.claimer == actor then return new.status == "open" or new.status == "done" or new.status == "claimed" end
+  -- the claimer: keep it (claimed / done) or un-claim it, never hand it on
+  if old.claimer == actor then
+    if new.claimer == actor then return new.status == "claimed" or new.status == "done" end
+    return new.claimer == nil and new.status == "open"
+  end
   return false
 end
 
@@ -207,10 +233,17 @@ end
 ------------------------------------------------------------------------
 -- Catch-up sync
 ------------------------------------------------------------------------
+-- requests catch-up passes on: not stale, and (once the roster has loaded)
+-- from guild members only, since others refuse the rest and the counts
+-- would never match
+local function Shared(r)
+  return not Stale(r) and (not next(ns.roster) or ns.roster[r.by] ~= nil)
+end
+
 local function Live()
   local n, maxTs = 0, 0
   for _, r in pairs(R.All()) do
-    if not Stale(r) then n = n + 1 end
+    if Shared(r) then n = n + 1 end
     if (r.ts or 0) > maxTs then maxTs = r.ts end
   end
   return n, maxTs
@@ -228,7 +261,7 @@ ns.CommHandlers.U = function(sender, payload)
   local theirN = tonumber(f[3])
   local all = theirN and theirN < Live() -- they're missing some older ones
   for _, r in pairs(R.All()) do
-    if (all or (r.ts or 0) > theirs) and not Stale(r) then
+    if (all or (r.ts or 0) > theirs) and Shared(r) then
       -- relay with the last actor we can vouch for: the requester or claimer
       local actor = (r.status == "claimed" or r.status == "done") and r.claimer or r.by
       ns.Send("N", Encode(r, actor))
@@ -237,14 +270,15 @@ ns.CommHandlers.U = function(sender, payload)
 end
 
 -- relayed copies: accept without re-checking order of past changes
-local MAX_OPEN = 10 -- open requests per member, so nobody can flood the guild
+local MAX_OPEN = 10 -- open or claimed requests per member, so nobody can flood the guild
 local function OpenBy(key)
   local n = 0
-  for _, x in pairs(R.All()) do if x.by == key and x.status == "open" and R.Active(x) then n = n + 1 end end
+  -- (claimed ones count too: otherwise a member and a friend claiming could pile up any number)
+  for _, x in pairs(R.All()) do if x.by == key and R.Active(x) then n = n + 1 end end
   return n
 end
 local baseHandler = ns.CommHandlers.N
-ns.CommHandlers.N = function(sender, payload)
+local function HandleRequest(sender, payload, replayed)
   local r, actor = Decode(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
   -- requesters must be guild members, so made-up names can't get round MAX_OPEN
@@ -252,11 +286,25 @@ ns.CommHandlers.N = function(sender, payload)
   local all = R.All()
   local old = all[r.id]
   if Stale(r) then return end
-  if not old and OpenBy(r.by) >= MAX_OPEN then return end
+  -- (a finished request made active again counts as a new one)
+  if (not old or (not R.Active(old) and R.Active(r))) and OpenBy(r.by) >= MAX_OPEN then return end
   -- the actor must be the sender (or the sender an officer); copies passed on by
   -- other members during catch-up only fill in requests we don't have yet
-  if not ns.FirstHand(sender, actor) then
+  local firstHand = ns.FirstHand(sender, actor)
+  -- a request we never saw that's already past open: first-hand only from the
+  -- requester or a crafts officer. A claimer could otherwise make up a request
+  -- in someone else's name and un-claim it into an open one, so theirs only
+  -- comes the catch-up way.
+  if firstHand and not old and r.status ~= "open" and actor ~= r.by and not P.IsOfficer(actor, "crafts") then
+    firstHand = false
+  end
+  if not firstHand then
     if old then return end
+    -- a request we never saw, open or not: only from the member answering our
+    -- catch-up (so nobody can post or claim on someone else's behalf)
+    if not replayed then
+      if not ns.RelayGate(sender, "U", function() HandleRequest(sender, payload, true) end) then return end
+    end
     if r.status == "open" then
       if actor == r.by then all[r.id] = r; ns.Fire("REQUESTS_CHANGED") end
       return
@@ -264,7 +312,9 @@ ns.CommHandlers.N = function(sender, payload)
   end
   if not old and r.status ~= "open" then
     -- we missed the earlier steps; trust it if the actor is part of the request or an officer
-    if actor == r.by or actor == r.claimer or P.IsOfficer(actor, "crafts") then
+    -- (not the claimer: a relay could make up a claimed request in someone
+    -- else's name)
+    if actor == r.by or P.IsOfficer(actor, "crafts") then
       all[r.id] = r
       ns.Fire("REQUESTS_CHANGED")
     end
@@ -272,6 +322,7 @@ ns.CommHandlers.N = function(sender, payload)
   end
   baseHandler(sender, payload)
 end
+ns.CommHandlers.N = function(sender, payload) HandleRequest(sender, payload, false) end
 
 ------------------------------------------------------------------------
 -- Alerts
@@ -284,21 +335,24 @@ function R.ForMe()
   return n
 end
 
+-- a name shown in chat, with any formatting codes ("|") taken out
+local function ChatName(key) return ns.ShortName((tostring(key or "?"):gsub("|", ""))) end
+
 function R.Notify(old, new)
   if new.by == ns.MyKey() then
     -- tell the requester when their request moves on
     if old and old.status ~= new.status and ns.Option("alertMyRequest") then
       if new.status == "claimed" then
-        ns.Print(("%s will craft your %s."):format(ns.ShortName(new.claimer), R.DisplayName(new)))
+        ns.Print(("%s will craft your %s."):format(ChatName(new.claimer), R.DisplayName(new)))
       elseif new.status == "done" and new.claimer then
-        ns.Print(("%s marked your %s as done."):format(ns.ShortName(new.claimer), R.DisplayName(new)))
+        ns.Print(("%s marked your %s as done."):format(ChatName(new.claimer), R.DisplayName(new)))
       end
     end
     return
   end
   if not old and new.status == "open" and ns.Option("alertNewRequest") and R.ICanCraft(new) then
     ns.Print(("%s needs %s x%d (%s). You can craft it: /fhub to claim."):format(
-      ns.ShortName(new.by), R.DisplayName(new), new.qty or 1, (R.MATS[new.mats] or ""):lower()))
+      ChatName(new.by), R.DisplayName(new), new.qty or 1, (R.MATS[new.mats] or ""):lower()))
   end
 end
 

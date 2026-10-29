@@ -182,6 +182,7 @@ ns.RegisterPanel("campplanner", "Camp planner", nil, function(panel)
   local planBtn = T.Button(panel, "Choose a camp", 200, 22)
   planBtn:SetPoint("TOPLEFT", 0, 0)
   local renameBox = T.Input(panel, 200, "Camp name")
+  renameBox:SetMaxLetters(40) -- keeps the chat summary's header line short
   renameBox:SetPoint("TOPLEFT", 0, 0)
   renameBox:Hide()
   local newBtn = T.Button(panel, "New", 56, 22); newBtn:SetPoint("LEFT", planBtn, "RIGHT", 6, 0)
