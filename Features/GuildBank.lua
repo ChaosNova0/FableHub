@@ -563,8 +563,9 @@ end
 local function DecodeReq(text)
   local f = Enc.Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" or not B.STATUS[f[7] or ""] then return nil end
+  local note = (f[6] or ""):gsub("|", "") -- (shown in chat and the UI: no formatting codes)
   return { id = f[2], by = f[3], item = Enc.FromB36(f[4]), qty = Num(f[5], 1, 999, 1), -- as B.Request allows
-           note = f[6] ~= "" and f[6] or nil, status = f[7], ts = Enc.FromB36(f[8]), actor = f[9],
+           note = note ~= "" and note or nil, status = f[7], ts = Enc.FromB36(f[8]), actor = f[9],
            created = Enc.FromB36(f[10]) }
 end
 
@@ -588,10 +589,10 @@ local function Allowed(old, new, relayed)
   end
   if not SameAsk(old, new) then return false end
   if P.IsOfficer(actor, "bankreq") then return true end
-  -- the requester: cancel, or reopen what they cancelled (not what an officer
-  -- declined or gave)
+  -- the requester: cancel what's open, or reopen what they cancelled (not
+  -- what an officer declined or gave)
   if actor ~= old.by then return false end
-  return new.status == "cancelled" or (new.status == "open" and old.status == "cancelled")
+  return (new.status == "cancelled" and old.status == "open") or (new.status == "open" and old.status == "cancelled")
 end
 
 -- done with: handled a week ago, or still open a month after it was asked

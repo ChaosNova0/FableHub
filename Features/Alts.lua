@@ -167,7 +167,9 @@ function A.Link(char, main)
   if not P.CanEdit("alts") or not char or not main or char == main then return false end
   main = A.MainOf(main, true)
   if main == char then return false end
-  if A.MainOf(main, true) ~= main or not All()[main] then Officer(main, main) end
+  -- (a main whose own entry we only have from a catch-up relay gets a
+  -- verified one too)
+  if A.MainOf(main, true) ~= main or not All()[main] or All()[main].relayed then Officer(main, main) end
   -- an alt moves on its own; a main brings its alts along
   local moving = A.MainOf(char, true) == char and A.GroupOf(char, true) or { char }
   for _, key in ipairs(moving) do Officer(key, main) end

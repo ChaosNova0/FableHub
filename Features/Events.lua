@@ -484,7 +484,7 @@ local function HandleSignup(sender, payload, replayed)
   -- an officer's own change, sent by that officer: the character stands as set
   local off = src ~= nil and src == "o:" .. sender and P.IsOfficer(sender, "raids") and ns.FirstHand(sender, sender)
   g.signups[occId] = g.signups[occId] or {}
-  g.signups[occId][signer] = { status = status, char = char, role = role, note = (f[8] or ""):sub(1, 60), ts = ts,
+  g.signups[occId][signer] = { status = status, char = char, role = role, note = (f[8] or ""):gsub("|", ""):sub(1, 60), ts = ts,
                                src = src, off = off or nil }
   ns.Fire("EVENTS_CHANGED")
 end

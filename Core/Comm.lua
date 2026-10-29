@@ -123,9 +123,10 @@ local function Pump()
       lastDigestAt = GetTime()
     end
     -- (everyone hears it: keeps the catch-up windows of those we answer open,
-    -- see RequesterWindowOpen; with the guild channel muted, guild messages go
-    -- out as whispers to every FableHub user, so those count too)
-    if result == "ok" and (not to or ns.guildMuted) then lastGuildSendAt = GetTime() end
+    -- see RequesterWindowOpen. With the guild channel muted, guild messages go
+    -- out as whispers to each FableHub user: only lastSendTo counts then, as a
+    -- whisper to one member doesn't keep anyone else's window open)
+    if result == "ok" and not to then lastGuildSendAt = GetTime() end
     if result == "ok" and item.target then lastSendTo[item.target] = GetTime() end
     Dequeue()
     tokens = tokens - 1
@@ -626,7 +627,9 @@ local CATCHUP_MAX = 1800   -- hard limit after our digest, however busy the rela
 local MAX_PENDING = 400    -- replays waiting per sender
 local pendingReplays = {}  -- [sender] = { { fn, dig, msgType, payload, from, loose }, ... }
 local relayUntil = {}      -- [sender] = { [digest type] = GetTime() that window closes for them }
-local relayHeardAt = -1e9  -- GetTime() we last heard a member known to be our relay (see AutoResync)
+-- [digest type] = GetTime() our relay's answer of that kind was last accepted
+-- (RelayGate said yes, or a held one was replayed; see AutoResync)
+local relayAnsweredAt = {}
 
 -- is our catch-up window of `digestType` open for `sender`?
 local function CatchUpOpen(digestType, sender)
@@ -655,11 +658,15 @@ end
 
 function ns.RelayGate(sender, digestType, replay)
   if type(sender) ~= "string" or IsLoose(sender) then return false end
-  if ns.Plans and ns.Plans.IsOfficer(sender) then return true end
+  if ns.Plans and ns.Plans.IsOfficer(sender) then
+    -- (an officer who is also our relay: still answering our catch-up)
+    if CatchUpOpen(digestType, sender) and ns.IsMyRelay(sender) then relayAnsweredAt[digestType] = GetTime() end
+    return true
+  end
   if not CatchUpOpen(digestType, sender) then return false end
   local relay = ns.IsMyRelay(sender)
   if relay then
-    relayHeardAt = GetTime()
+    relayAnsweredAt[digestType] = GetTime()
     RelayActive(sender)
     return true
   end
@@ -693,6 +700,7 @@ local function FlushReplays(sender)
   local r1, r2, r3, r4 = ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose
   for _, e in ipairs(list) do
     if CatchUpOpen(e.dig, sender) then
+      relayAnsweredAt[e.dig] = GetTime()
       ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose = e.msgType, e.payload, e.from, e.loose
       local ok, err = pcall(e.fn)
       if not ok then ns.ReportError(err) end
@@ -726,6 +734,8 @@ function ns.RegisterDigest(fn) digests[#digests + 1] = fn end
 ------------------------------------------------------------------------
 local helloAnswered = {}    -- [key] = { t, n }: our replies to their hellos (see HandleHello)
 local replyDue = {}         -- [key] = GetTime() of a hello of theirs we owe a reply to
+local frontedAt = {}        -- [key] = GetTime() we last sent them a reply ahead of the queue (see Dispatch)
+local FRONT_GAP = 60
 local lastReplyAt = -1      -- GetTime() we last queued a reply (R)
 local wantedRecently = {}   -- [key] = GetTime() when we decided to ask for it
 local wantSeen = {}         -- [key] = GetTime() when someone else asked for it
@@ -824,12 +834,15 @@ local function HandleHello(sender, payload, isReply)
   -- as we resolved it (so nobody can be noted as present, or as running some
   -- version, under someone else's name). Versions only count from senders
   -- matched exactly to the roster (see VersionConfirmed).
-  if f[2] and #f[2] > 16 then f[2] = f[2]:sub(1, 16) end
-  ns.present[sender] = f[2] or "?"
-  if receivingExact then NoteVersion(sender, f[2]) end
+  -- A version that isn't "1.2" / "1.2.3" (at most 16 characters, as on the
+  -- legacy channel) is ignored: it's shown in the UI and compared.
+  local ver = f[2]
+  if ver and (#ver > 16 or not ver:match("^%d+%.%d+%.?%d*$")) then ver = nil end
+  ns.present[sender] = ver or "?"
+  if receivingExact and ver then NoteVersion(sender, ver) end
   local g = ns.GuildDB()
   if g then
-    g.addonUsers[sender] = { version = f[2], seen = ns.Now() }
+    g.addonUsers[sender] = { version = ver, seen = ns.Now() }
   end
   -- catch-up answers of theirs that arrived before this hello (see RelayGate)
   FlushReplays(sender)
@@ -853,7 +866,7 @@ local function HandleHello(sender, payload, isReply)
   -- but a repeated hello can't make every FableHub user reply every time
   -- (past that, the reply still goes out right before our answer if they ask
   -- us for catch-up: they need it to take our answers, see Dispatch; that
-  -- path has its own limits, DIGEST_GAP and ANSWER_GAP)
+  -- path has its own limits, FRONT_GAP, DIGEST_GAP and ANSWER_GAP)
   if not isReply then
     local now, a = GetTime(), helloAnswered[sender]
     if not a or now - a.t > 300 then a = { t = now, n = 0 }; helloAnswered[sender] = a end
@@ -1046,8 +1059,10 @@ local CLOSE_MARGIN = 20
 local function RequesterWindowOpen(asker, askedAt)
   local now = GetTime()
   if now - askedAt > CATCHUP_MAX - CLOSE_MARGIN then return false end
-  -- (whispers to them keep it open too)
-  local heard = math.max(askedAt, lastGuildSendAt, lastSendTo[asker] or -1e9)
+  -- (whispers to them keep it open too; with the guild channel muted, only
+  -- those reach them)
+  local heard = math.max(askedAt, lastSendTo[asker] or -1e9)
+  if not ns.guildMuted then heard = math.max(heard, lastGuildSendAt) end
   return now - heard <= CATCHUP_WINDOW - CLOSE_MARGIN
 end
 
@@ -1087,9 +1102,16 @@ function Dispatch(sender, msgType, payload, answering, channel, loose)
     -- before our answers (they only take catch-up answers from the member
     -- they know answers them, see RelayGate), ahead of whatever is waiting.
     -- Only when we answer them as their relay (officers' answers are taken
-    -- without it, see RelayGate / OfficerSent).
+    -- without it, see RelayGate / OfficerSent), and ahead of the queue at most
+    -- once per FRONT_GAP seconds each: otherwise alternating hellos and
+    -- digests would get round the hello quota and keep the relay sending
+    -- replies first. Past that, the reply HandleHello scheduled within its
+    -- quota (if any) is all they get.
     if replyDue[sender] and AmRelayFor(sender) then
-      SendReply(replyDue[sender], true)
+      if now - (frontedAt[sender] or -1e9) >= FRONT_GAP then
+        frontedAt[sender] = now
+        SendReply(replyDue[sender], true)
+      end
       replyDue[sender] = nil
     end
     return AnswerCatchUp(sender, msgType, payload, 0, channel, loose, now)
@@ -1174,10 +1196,9 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   -- RelayGate): answers to us can sit behind a long queue of other parts.
   -- Also before their hello reached us (nil: can't tell yet), as RelayGate's
   -- deferred path does: dropped by FlushReplays if they turn out not to be.
-  if not loose and GetTime() - lastDigestAt <= CATCHUP_MAX then
-    local relay = ns.IsMyRelay(sender)
-    if relay then relayHeardAt = GetTime() end
-    if relay ~= false then RelayActive(sender) end
+  -- (AutoResync only counts answers RelayGate accepted, not this)
+  if not loose and GetTime() - lastDigestAt <= CATCHUP_MAX and ns.IsMyRelay(sender) ~= false then
+    RelayActive(sender)
   end
   part, total = tonumber(part), tonumber(total)
   if total == 1 then return Dispatch(sender, msgType, payload, nil, channel, loose) end
@@ -1224,17 +1245,20 @@ end
 -- second): when a window is about to hit that limit while our relay is still
 -- sending to us, send our digests again, once per login / sync. That opens
 -- fresh windows, and the relay (its ANSWER_GAP long passed) answers with only
--- what our new digests still lack.
+-- what our new digests still lack. "Still sending" means an answer of that
+-- kind was accepted from it (RelayGate) in the last CATCHUP_WINDOW seconds:
+-- other traffic from the relay keeps windows open but doesn't count here, or
+-- an active guild would resync about once per login.
 local autoResynced = false
 local function AutoResync()
   if autoResynced or not started then return end
   local now = GetTime()
-  if now - relayHeardAt > CATCHUP_WINDOW then return end
   for d, t in pairs(digestSentAt) do
     local age = now - t
     -- (checked every 30 s: two chances in this range, and our digests are
     -- queued within seconds, before the window closes)
-    if age >= CATCHUP_MAX - 90 and age < CATCHUP_MAX - 30 then
+    if age >= CATCHUP_MAX - 90 and age < CATCHUP_MAX - 30
+        and now - (relayAnsweredAt[d] or -1e9) <= CATCHUP_WINDOW then
       for sender, u in pairs(relayUntil) do
         if (u[d] or 0) >= now and ns.IsMyRelay(sender) then
           autoResynced = true
@@ -1333,6 +1357,7 @@ ns.On("LOGIN", function()
     for k, t in pairs(reassertFrom) do if now - t > 300 then reassertFrom[k] = nil end end
     for k, t in pairs(answerCounted) do if now - t > 120 then answerCounted[k] = nil end end
     for k, t in pairs(replyDue) do if now - t > 60 then replyDue[k] = nil end end
+    for k, t in pairs(frontedAt) do if now - t > FRONT_GAP then frontedAt[k] = nil end end
     for k, t in pairs(lastSendTo) do if now - t > CATCHUP_MAX then lastSendTo[k] = nil end end
     AutoResync()
     ExpireReplays()

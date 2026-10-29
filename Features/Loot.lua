@@ -507,8 +507,9 @@ end
 local function DecodeEntry(text)
   local f = Enc.Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" then return nil end
+  local note = (f[9] or ""):gsub("|", "") -- (shown in the UI: no formatting codes)
   return { id = f[2], item = Enc.FromB36(f[3]), to = f[4], at = Enc.FromB36(f[5]), ts = Enc.FromB36(f[6]), by = f[7],
-    inst = f[8] ~= "" and f[8] or nil, note = f[9] ~= "" and f[9] or nil, deleted = f[10] == "1", prio = tonumber(f[11]) }
+    inst = f[8] ~= "" and f[8] or nil, note = note ~= "" and note or nil, deleted = f[10] == "1", prio = tonumber(f[11]) }
 end
 
 -- Look for an entry for the same item and player within 20 minutes (other officers record the same drop)

@@ -119,14 +119,17 @@ local function Decode(text)
   local f = Enc.Split(text, "^")
   if f[1] ~= "1" or not f[2] or f[2] == "" or not R.STATUS[f[10] or ""] then return nil end
   local recipe, item, prof = Enc.FromB36(f[4]), Enc.FromB36(f[5]), Enc.FromB36(f[6])
-  -- (names are shown in chat: no formatting codes)
+  -- (names and notes are shown in chat and the UI: no formatting codes)
   local by, claimer, actor = (f[3] or ""):gsub("|", ""), (f[11] or ""):gsub("|", ""), (f[14] or ""):gsub("|", "")
-  -- a claimer must be a guild member (once the roster has loaded)
-  if claimer ~= "" and next(ns.roster) and not ns.roster[claimer] and claimer ~= ns.MyKey() then return nil end
+  -- (a claimer who left the guild is kept, so the request can still be
+  -- finished, cancelled or un-claimed; a new claimer must be a member, see
+  -- Allowed)
+  claimer = claimer:sub(1, 64)
+  local note = (f[9] or ""):gsub("|", "")
   return {
     id = f[2], by = by, recipe = recipe > 0 and recipe or nil, item = item > 0 and item or nil, prof = prof > 0 and prof or nil,
     qty = math.max(1, math.min(99, tonumber(f[7]) or 1)), mats = R.MATS[f[8]] and f[8] or "none",
-    note = f[9] ~= "" and f[9]:sub(1, 80) or nil,
+    note = note ~= "" and note:sub(1, 80) or nil,
     status = f[10], claimer = claimer ~= "" and claimer or nil, created = Enc.FromB36(f[12]), ts = Enc.FromB36(f[13]),
   }, f[14] and actor or nil
 end
@@ -145,8 +148,16 @@ local function SameAsk(old, new)
     and Safe(old.note):sub(1, 80) == Safe(new.note):sub(1, 80)
 end
 
+-- a claimer must be a guild member (once the roster has loaded), or us
+local function MemberKey(key)
+  return not next(ns.roster) or ns.roster[key] ~= nil or key == ns.MyKey()
+end
+
 local function Allowed(old, new, actor)
   if not actor or actor == "" then return false end
+  -- (only checked when the claimer changes: a request whose claimer left the
+  -- guild can still be finished, cancelled or un-claimed)
+  if new.claimer and new.claimer ~= (old and old.claimer) and not MemberKey(new.claimer) then return false end
   if not old then return actor == new.by and new.status == "open" end -- only the requester posts
   if not SameRequest(old, new) then return false end
   -- requester: edit amount/mats/note, cancel, mark done, un-claim (but not
@@ -234,10 +245,12 @@ end
 -- Catch-up sync
 ------------------------------------------------------------------------
 -- requests catch-up passes on: not stale, and (once the roster has loaded)
--- from guild members only, since others refuse the rest and the counts
--- would never match
+-- from guild members only and not claimed by someone who left, since others
+-- refuse the rest (see HandleRequest) and the counts would never match
 local function Shared(r)
-  return not Stale(r) and (not next(ns.roster) or ns.roster[r.by] ~= nil)
+  if Stale(r) then return false end
+  if not next(ns.roster) then return true end
+  return ns.roster[r.by] ~= nil and (not r.claimer or MemberKey(r.claimer))
 end
 
 local function Live()
@@ -262,9 +275,11 @@ ns.CommHandlers.U = function(sender, payload)
   local all = theirN and theirN < Live() -- they're missing some older ones
   for _, r in pairs(R.All()) do
     if (all or (r.ts or 0) > theirs) and Shared(r) then
-      -- relay with the last actor we can vouch for: the requester or claimer
-      local actor = (r.status == "claimed" or r.status == "done") and r.claimer or r.by
-      ns.Send("N", Encode(r, actor))
+      -- relayed copies carry the requester as actor: receivers fill in a
+      -- request they never saw that's past open only when the actor is the
+      -- requester or a crafts officer (0.22 also took the claimer; 0.23 no
+      -- longer does), and only from their catch-up relay (RelayGate)
+      ns.Send("N", Encode(r, r.by))
     end
   end
 end
@@ -311,13 +326,23 @@ local function HandleRequest(sender, payload, replayed)
     end
   end
   if not old and r.status ~= "open" then
-    -- we missed the earlier steps; trust it if the actor is part of the request or an officer
-    -- (not the claimer: a relay could make up a claimed request in someone
-    -- else's name)
-    if actor == r.by or P.IsOfficer(actor, "crafts") then
+    -- we missed the earlier steps; trust it if the actor is the requester or
+    -- an officer (not the claimer: a relay could make up a claimed request in
+    -- someone else's name; catch-up answers carry the requester, see U) and
+    -- the claimer is a guild member
+    if (actor == r.by or P.IsOfficer(actor, "crafts")) and (not r.claimer or MemberKey(r.claimer)) then
       all[r.id] = r
       ns.Fire("REQUESTS_CHANGED")
     end
+    return
+  end
+  -- a crafts officer passing on a catch-up copy of a request we hold an older
+  -- version of: the copy names the requester as actor (see U), who can't move
+  -- the claim on; the officer could make that change themselves, so their
+  -- word stands for it
+  if old and sender ~= actor and P.IsOfficer(sender, "crafts") and not ns.IsLooseSender(sender)
+      and not Allowed(old, r, actor) then
+    Apply(r, sender)
     return
   end
   baseHandler(sender, payload)
