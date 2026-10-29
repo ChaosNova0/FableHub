@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.22.0"
+ns.VERSION = "0.23.0"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves

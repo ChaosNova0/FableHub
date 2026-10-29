@@ -1,4 +1,4 @@
-# FableHub 0.22.0
+# FableHub 0.23.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -25,7 +25,7 @@ Guild roster and profession tracker for WoW: Forever.
   - Officers post announcements with **+ Post**. They disappear after 14 days unless pinned; right-click one to pin, unpin or delete it.
 - **Roster** (sidebar section with Members and Alts):
   - **Members**: every guild member with level, rank, zone, note and last seen. Hover for details, right-click to whisper.
-  - **Alts**: each player's main with their alts underneath (click a main to show or hide them). Alts link automatically: when someone logs in with FableHub, it knows every character on their account and tells the guild. Characters with nobody linked are under "Not linked".
+  - **Alts**: each player's main with their alts underneath (click a main to show or hide them). Alts link automatically: when someone logs in with FableHub, it knows every character on their account and tells the guild. A link completes once both characters have logged in with FableHub 0.23 or later, so nobody can claim someone else's character. Characters with nobody linked are under "Not linked".
     - **My main** picks which of your characters is your main (your highest level until you choose). Or right-click your own character.
     - Officers right-click any character to link it as an alt of someone (pick the main from a searchable guild list), unlink it, or make it the main. An officer's change stays until that player changes their own main or logs in a new alt.
 - **Professions** (sidebar section with Recipes, Craft Requests, and Camping, which holds Camp guide and Camp planner)

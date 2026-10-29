@@ -2,7 +2,7 @@
 
 **Guild management for WoW: Forever, built for the guild *Fable*.**
 
-![Version](https://img.shields.io/badge/version-0.22.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.23.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 
@@ -123,9 +123,10 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 Every guildmate's FableHub checks what it receives, so these rules don't depend on hiding buttons:
 
 - **Officer data** is accepted only when its author's rank may use that feature (officer ranks, or the Guild Master's feature permissions), and only straight from that author or passed on by someone allowed to use that feature.
-- **Members' own data** (sign-ups, requests, bank reads, alt links) can only be changed by that member or an officer. Copies passed on by others only fill gaps, and sign-ups and alt links only from the member answering your catch-up. A link an officer set by hand stays until an officer changes it.
+- **Members' own data** (character records, sign-ups, requests, bank reads, alt links) can only be changed by that member or an officer. Copies passed on by others only fill gaps, and only from an officer or the member answering your catch-up. Who asked, the item and the amount of a request never change. An alt link needs both characters to agree. A link an officer set by hand stays until an officer changes it.
+- **Names:** addon whispers must come from an exact guild roster name; a sender matched only by first name can't act as an officer or for someone else.
 - **Self-correcting:** if anyone sends a newer copy of *your* record, sign-up or alt links than yours, your FableHub re-sends the real one so it wins everywhere.
-- **Limits:** size limits per message type, a few half-received messages per sender, catch-up requests answered at most every 20 seconds per member, hellos answered at most 3 times in 5 minutes per member, text fields cut to their normal length, at most 10 open craft and 10 open bank requests per member, and nothing dated more than five minutes ahead.
+- **Limits:** size limits per message type, a few half-received messages per sender, full catch-up answered at most every 5 minutes per member, hellos answered at most 3 times in 5 minutes per member, text fields cut to their normal length, at most 10 open craft and 10 open bank requests (30 bank requests in all) per member, at most 40 sign-ups per member, and nothing dated more than five minutes ahead. Open bank requests expire after 30 days.
 - **Other safeguards:** addon whispers from outside the guild are ignored and WoW formatting codes are stripped from everything received. Restricted bank tabs are only whispered to ranks allowed to see them.
 - **No internet:** addons can't reach it. The Raid-Helper and That's My BIS imports work by pasting their export text.
 
