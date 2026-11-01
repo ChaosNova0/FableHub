@@ -18,6 +18,12 @@ local function SetsEqual(a, b)
 end
 
 local function Changed(rec)
+  -- time played is only refreshed (or removed) here, so the record's time
+  -- moves with it (Played.lua loads after this file)
+  if ns.Played then
+    local ok, err = pcall(ns.Played.BeforeChange, rec)
+    if not ok then ns.ReportError("played: " .. tostring(err)) end
+  end
   -- never backwards (ReassertMine may have pushed it past the clock)
   rec.ts = math.max(ns.Now(), (rec.ts or 0) + 1)
   ns.MirrorMyRecord()

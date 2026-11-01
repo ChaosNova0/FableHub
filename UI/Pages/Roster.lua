@@ -71,6 +71,7 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
   local list = UI.CreateList(panel, {
     { title = "Name", width = 170 },
     { title = "Lvl", width = 30, justify = "RIGHT", defaultAsc = false },
+    { title = "Played", width = 66, justify = "RIGHT", defaultAsc = false },
     { title = "Rank", width = 110 },
     { title = "Zone", flex = true },
     { title = "Note", flex = true },
@@ -99,6 +100,7 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
     if item.attTotal and item.attTotal > 0 then
       tt:AddLine(("Attended %d of the last %d raid nights (30 days)"):format(item.attended, item.attTotal), 0.8, 0.8, 0.8)
     end
+    ns.Played.AddTooltip(tt, m.key, rec, r)
     tt:AddLine(" ")
     -- their FableHub version: this session, else the last one we saw
     local g = ns.GuildDB()
@@ -132,11 +134,13 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
         local attPct = attTotal > 0 and math.floor(attended / attTotal * 100 + 0.5) or 0
         local seenTs = isOnline and ns.Now() or (r and r.lastSeen)
           or ((g and g.addonUsers[m.key] and g.addonUsers[m.key].seen) or 0)
+        local played, playedSort = ns.Played.Cell(m.key, rec, r, isOnline)
         items[#items + 1] = {
           member = m,
           cols = {
             UI.NameCell(m.key, classFile, isOnline),
             isOnline and tostring(level) or UI.Dim(tostring(level), 0.45),
+            played,
             UI.Dim(r and r.rank or "", isOnline and 0.7 or 0.4),
             UI.Dim(zone, isOnline and 0.6 or 0.35),
             UI.Dim(note, 0.5),
@@ -144,7 +148,7 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
               or UI.Colorize(attPct .. "%", 0.9, 0.5, 0.45)) or UI.Dim("-", 0.3),
             isOnline and "|cff40d66eonline|r" or UI.Dim(seenTs > 0 and UI.TimeAgo(seenTs) or "", 0.4),
           },
-          sort = { ns.ShortName(m.key):lower(), level, (r and r.rankIndex) or 99, zone:lower(), note:lower(),
+          sort = { ns.ShortName(m.key):lower(), level, playedSort, (r and r.rankIndex) or 99, zone:lower(), note:lower(),
                    attTotal > 0 and attPct or -1, isOnline and math.huge or seenTs },
           attended = attended, attTotal = attTotal,
           tooltip = Tooltip,

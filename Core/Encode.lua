@@ -3,7 +3,8 @@
 -- record  = "1^<key>^<ts>^<class>^<level>^<prof>~<prof>..."
 -- prof    = "<skillLine>:<rank>:<max>:<name>:<recipe>.<recipe>..."
 -- fields after the profs: spec tree, points, buffs, spec name, recipe outputs,
--- then (only when there are any) cooldowns "<id>=<ready>=<dur>,..." and when they were read
+-- then (only when there are any) cooldowns "<id>=<ready>=<dur>,..." and when they were read,
+-- then (only when the owner shares it, 0.24+) time played (see Enc.EncodePlayed)
 -- numbers are base36 to keep messages short.
 
 local _, ns = ...
@@ -48,8 +49,25 @@ function Enc.EncodeOutputs(rec)
   return table.concat(out, ",")
 end
 
--- noCds: leave the cooldowns out (to compare with a copy passed on by a 0.21
--- client, which doesn't know them and relays records without them)
+-- Time played (0.24+, field 14): "1=<total>=<thisLevel>=<lvl>=<at>", plus
+-- "=<xp>=<xpMax>=<rested>=<sess>" below the level cap. The leading 1 is the
+-- format's version (other versions are ignored). Seconds; at = server time of
+-- the reading; sess = XP per hour this session (0 = not known).
+-- The level cap here is fixed rather than the client's own (ns.MaxLevel), so
+-- every encoder and decoder agrees on when there's an XP part.
+Enc.PLAYED_MAX_LEVEL = 60
+function Enc.EncodePlayed(p)
+  if type(p) ~= "table" or (tonumber(p.total) or 0) <= 0 then return nil end
+  local B = Enc.ToB36
+  local parts = { "1", B(p.total), B(p.thisLevel), B(p.lvl), B(p.at) }
+  if p.xpMax and (tonumber(p.lvl) or 0) < Enc.PLAYED_MAX_LEVEL then
+    parts[6], parts[7], parts[8], parts[9] = B(p.xp), B(p.xpMax), B(p.rested), B(p.sess)
+  end
+  return table.concat(parts, "=")
+end
+
+-- noCds: core fields only, leaving out the cooldowns and time played (what a
+-- 0.21 client passes on: it doesn't know them and relays records without them)
 function Enc.EncodeRecord(rec, noCds)
   local profs = {}
   -- sort for stable output (helps tests and avoids needless diffs)
@@ -86,6 +104,14 @@ function Enc.EncodeRecord(rec, noCds)
     fields[12] = table.concat(cds, ",")
     fields[13] = Enc.ToB36(rec.cdChecked or 0)
   end
+  -- time played (0.24+), only when shared, so a record without it encodes as
+  -- before; empty cooldown fields fill the gap when there are no cooldowns
+  local played = not noCds and rec.played and Enc.EncodePlayed(rec.played)
+  if played then
+    fields[12] = fields[12] or ""
+    fields[13] = fields[13] or ""
+    fields[14] = played
+  end
   return table.concat(fields, "^")
 end
 
@@ -118,6 +144,38 @@ local MAX_BUFFS = 128       -- buffs per record (Data/Buffs.lua lists ~60; a rea
                             -- never be cut short, or its owner would see a "different" copy)
 local MAX_BUFF_ID = 32      -- length of one buff id
 local MAX_CLASS = 16        -- class token ("WARRIOR"): upper-case letters only
+local MAX_PLAYED = 157680000 -- time played: 5 years
+local MAX_XP = 1000000      -- XP needed for one level
+local MAX_XP_RATE = 500000  -- XP per hour
+
+-- field 14 -> { total, thisLevel, lvl, at, xp?, xpMax?, rested?, sess? }, or nil
+-- if it isn't a sane reading. A bad XP part drops only the XP part. Honest
+-- values are never clamped, so encoding a decoded reading gives it back.
+-- (the level cap is Enc.PLAYED_MAX_LEVEL, as in EncodePlayed)
+function Enc.DecodePlayed(s)
+  if type(s) ~= "string" or #s > 120 or not s:match("^[%w=]+$") then return nil end
+  local f = Split(s, "=")
+  if f[1] ~= "1" or (#f ~= 5 and #f ~= 9) then return nil end
+  for i = 2, #f do if f[i] == "" then return nil end end
+  local maxLevel = Enc.PLAYED_MAX_LEVEL
+  local n = {}
+  for i = 2, #f do n[i] = Enc.FromB36(f[i]) end
+  local total, thisLevel, lvl, at = n[2], n[3], n[4], n[5]
+  local now = ns.Now and ns.Now() or 0
+  if total <= 0 or total > MAX_PLAYED or thisLevel < 0 or thisLevel > total
+    or lvl < 1 or lvl > maxLevel or at <= 0 or at > now + 300 then
+    return nil
+  end
+  local p = { total = total, thisLevel = thisLevel, lvl = lvl, at = at }
+  if #f == 9 and lvl < maxLevel then
+    local xp, xpMax, rested, sess = n[6], n[7], n[8], n[9]
+    if xpMax > 0 and xpMax <= MAX_XP and xp >= 0 and xp < xpMax and rested >= 0 and rested <= 1.5 * xpMax
+      and sess >= 0 and sess <= MAX_XP_RATE then
+      p.xp, p.xpMax, p.rested, p.sess = xp, xpMax, rested, sess
+    end
+  end
+  return p
+end
 
 function Enc.DecodeRecord(text)
   local f = Split(text, "^")
@@ -200,6 +258,7 @@ function Enc.DecodeRecord(text)
     end
     if rec.cds then rec.cdChecked = math.max(0, math.min(Enc.FromB36(f[13]), now + 300)) end
   end
+  if f[14] and f[14] ~= "" then rec.played = Enc.DecodePlayed(f[14]) end
   return rec
 end
 

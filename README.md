@@ -2,7 +2,7 @@
 
 **Guild management for WoW: Forever, built for the guild *Fable*.**
 
-![Version](https://img.shields.io/badge/version-0.23.1-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.24.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 
@@ -20,7 +20,7 @@ The page FableHub opens on.
 - A **Getting started** card lists any setup left for you, and disappears when it's done.
 
 ### Roster
-- **Members**: level, rank, zone, notes, last seen, 30-day raid attendance and FableHub version.
+- **Members**: level, rank, zone, notes, last seen, 30-day raid attendance and FableHub version. Members who choose to share it also show their **time played** (sortable), and the tooltip adds their total with alts and, under 60, level progress with an XP bar, XP per hour and time to the next level.
 - **Alts**: linked automatically from each player's own account and grouped under their main. Players pick their main; officers can fix links.
 
 ### Professions
@@ -45,7 +45,7 @@ The page FableHub opens on.
 - Members can **request items**; officers hand them over or decline.
 
 ### Settings
-Everything in one place (the cog in the title bar): alerts, minimap button, window opacity, officer ranks, and **feature permissions** (below).
+Everything in one place (the cog in the title bar): alerts, minimap button, window opacity, sharing your time played (**Privacy**, off by default), officer ranks, and **feature permissions** (below).
 
 Officers also get a **Change log**: the last 20 officer actions their FableHub has seen (permission and officer rank changes, raid nights, attendance fixes, That's My BIS imports, loot priority edits, removed loot, announcements, alt links set by hand, and bank requests handed over or declined), with who did it and when. It needs no extra addon messages, and changes made while you were offline show up once catch-up brings them in.
 
@@ -113,6 +113,7 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 ## How sharing works
 
 - **Each player shares only their own characters** (level, professions, recipes, talents, alts). Everyone stores what they hear, so offline members still show.
+- **Time played is opt-in:** only players who turn on Settings > Privacy > *Share my time played with the guild* share their /played (and, under 60, their XP, rested XP and XP per hour). Turning it off removes it from everyone's roster on their next sync; older FableHub versions passing records on can't bring it back.
 - **Catch-up:** when someone logs in, the online member with the newest FableHub sends them what they missed. A newer version only counts once an officer or two members run it. Officer data (raid nights, loot, announcements, raid plans, attendance) is passed on by an online officer allowed to use that feature.
 - **Messages** are split into parts, throttled, and paused during combat and boss fights. A copy of something already waiting to be sent is skipped, and while a lot is waiting, catch-up answers wait their turn.
 - **Connected realms:** Forever drops guild addon messages from characters on a connected realm. FableHub notices when its own messages don't come back and whispers other FableHub users instead. Characters are stored under the guild's home realm, so every client agrees on names.

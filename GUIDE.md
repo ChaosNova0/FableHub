@@ -1,4 +1,4 @@
-# FableHub 0.23.1
+# FableHub 0.24.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -21,10 +21,12 @@ Guild roster and profession tracker for WoW: Forever.
   - Message of the Day, Announcements, Recent loot, Bank requests (officers only), Upcoming raids (with Accept / Late / Tentative / Decline for the next raid night), Crafting requests (ones you can craft and your own) and who's online.
   - **Guild activity**: level milestones (10/20/30/40/50/60), profession milestones (150/225/300), new recipes for rare or better items, members joining or leaving, raid nights scheduled and crafting requests completed. Kept for 30 days; only changes after installing are shown.
   - Cards shrink to fit what's in them; click a card's title to collapse or expand it (remembered).
-  - **Getting started** appears at the top while there's setup left: professions whose recipes FableHub hasn't read yet, and for the Guild Master, choosing officer ranks and opening the guild bank once. Each tip goes away when it's done; **Hide** (or Settings) turns the card off.
+  - **Getting started** appears at the top while there's setup left: professions whose recipes FableHub hasn't read yet, and for the Guild Master, choosing officer ranks and opening the guild bank once. Each tip goes away when it's done; **Hide** (or Settings) turns the card off. It also asks once whether you'd like to share your time played: **Turn on** or **Not now** (Settings > Privacy changes it later).
   - Officers post announcements with **+ Post**. They disappear after 14 days unless pinned; right-click one to pin, unpin or delete it.
 - **Roster** (sidebar section with Members and Alts):
-  - **Members**: every guild member with level, rank, zone, note and last seen. Hover for details, right-click to whisper.
+  - **Members**: every guild member with level, time played, rank, zone, note and last seen. Hover for details, right-click to whisper.
+    - **Played** shows the total /played of members who share it (Settings > Privacy, off unless they turn it on), counting on while they're online; "-" for everyone else. Click the column title to sort by it.
+    - Hovering a member who shares it adds **Time played**: the total, **With alts** (all their linked characters that share it), and for characters under 60 the time on this level, an XP bar (rested XP in light blue), XP and rested XP, **XP per hour** (this session while they're online, otherwise their average over this level) and **Next level in**. A reading over 10 minutes old says when it was taken. For members who don't share it the tooltip says so, or that it shows once they install or update FableHub (0.24 or later).
   - **Alts**: each player's main with their alts underneath (click a main to show or hide them). Alts link automatically: when someone logs in with FableHub, it knows every character on their account and tells the guild. A link completes once both characters have logged in with FableHub 0.23 or later, so nobody can claim someone else's character. Characters with nobody linked are under "Not linked".
     - **My main** picks which of your characters is your main (your highest level until you choose). Or right-click your own character.
     - Officers right-click any character to link it as an alt of someone (pick the main from a searchable guild list), unlink it, or make it the main. An officer's change stays until that player changes their own main or logs in a new alt.
@@ -96,6 +98,7 @@ Guild roster and profession tracker for WoW: Forever.
   - General: minimap button, open on Home each session, window opacity, reset window.
   - Alerts in chat (each can be turned off): raid nights you haven't signed up for, new craft requests you can make, open requests at login, your request claimed or done, and the request count on the minimap button.
   - Raids: run the ready check automatically.
+  - Privacy: **Share my time played with the guild** (off by default). When on, FableHub reads your /played at login and when you level up (without printing it in chat) and shares it with your character. Turning it off removes it from everyone's roster on their next sync. Guildmates who don't sync again (for example because they stopped playing or left the guild) keep the last copy they received. The setting is for your whole account; your other characters update the next time you log in on them.
   - Officers: officer ranks (Guild Master), feature permissions, announce awarded loot in raid chat, and **Change log** (officers only): the last 20 officer changes, who made them and when. Several edits of the same kind by one officer within 5 minutes show as one line.
   - **Feature permissions** (button under Officers): a grid of features and guild ranks. The Guild Master ticks which ranks may use each one: Announcements, Raid nights, Raid plans, Loot, Alts, Bank requests (handing over / declining), Craft requests (cancelling anyone's), and Ask the bank (asking for guild bank items). Hover a feature for exactly what it covers. A feature the Guild Master hasn't changed follows the officer ranks setting (Ask the bank: every rank); **Reset** puts one back, **Reset all** puts them all back. The Guild Master can always use everything. Everyone else can look at the grid but not change it. It's checked by every guildmate's FableHub, not just by hiding buttons.
   - Data: sync now, rescan your character, clear stored guild data (click twice).
@@ -113,6 +116,7 @@ Bundles LibDeflate (zlib licence) and rxi/json.lua (MIT) to read That's My BIS e
 
 ## How sharing works
 Each player's addon shares only their own character with the guild, over the hidden addon channel.
+Time played is only shared by players who turn it on in Settings > Privacy, and disappears from everyone's roster when they turn it off.
 Everyone stores what they hear, so you can still see an offline member's professions.
 Nothing is sent during combat or boss fights.
 Officer data (raid nights, loot, announcements, raid plans, attendance) is only accepted from officers, so someone logging in later receives it once an officer with FableHub is online.

@@ -956,14 +956,36 @@ local function HandleDigest(sender, payload)
   ns.Debug(("relayed %d records to %s"):format(sent, sender))
 end
 
--- the same record apart from cooldowns (clients pass records on with only the
--- cooldowns they know: 0.21 none, and each version drops ones newer than it)
-local function SameApartFromCds(a, b)
+-- the same record apart from cooldowns and time played (clients pass records
+-- on with only what they know: 0.21 no cooldowns, each version drops cooldowns
+-- newer than it, and before 0.24 no time played)
+local function SameCore(a, b)
   return Enc.EncodeRecord(a, true) == Enc.EncodeRecord(b, true)
 end
 
+-- does `rec` hold time played that `mine` doesn't, or holds differently?
+-- (`rec` lacking it doesn't count: see SameCore). Both sides are compared as
+-- a receiver holds them (encoded, decoded, encoded again), so anything the
+-- decoder drops from ours (e.g. an XP part outside its limits) can't make an
+-- honest echo look different.
+local function PlayedWire(p)
+  local s = p and Enc.EncodePlayed(p)
+  local d = s and Enc.DecodePlayed(s)
+  return d and Enc.EncodePlayed(d)
+end
+local function PlayedDiffer(rec, mine)
+  if not rec.played then return false end
+  local m = PlayedWire(mine.played)
+  return not m or PlayedWire(rec.played) ~= m
+end
+
+-- does `rec` hold time played `have` lacks?
+local function AddsPlayed(rec, have)
+  return rec.played ~= nil and not have.played
+end
+
 -- does `rec` hold a cooldown `mine` doesn't, or holds differently? (cooldowns
--- `mine` has that `rec` lacks don't count: see SameApartFromCds)
+-- `mine` has that `rec` lacks don't count: see SameCore)
 local function CdsDiffer(rec, mine)
   for id, e in pairs(rec.cds or {}) do
     local m = mine.cds and mine.cds[id]
@@ -999,10 +1021,11 @@ local function HandleFull(sender, payload)
     local mine = ns.MyRecord()
     -- a newer copy, or one with our timestamp but different contents, gets
     -- corrected; a copy of ours someone passed on is left alone, also when it
-    -- lacks some of our cooldowns (an older client relaying it without the
-    -- ones it doesn't know). Throttled per sender like a digest's (ReassertFor).
+    -- lacks some of our cooldowns or our time played (an older client relaying
+    -- it without what it doesn't know). Throttled per sender like a digest's (ReassertFor).
     if mine and (rec.ts > (mine.ts or 0)
-        or (rec.ts == (mine.ts or 0) and (not SameApartFromCds(rec, mine) or CdsDiffer(rec, mine)))) then
+        or (rec.ts == (mine.ts or 0)
+          and (not SameCore(rec, mine) or CdsDiffer(rec, mine) or PlayedDiffer(rec, mine)))) then
       ReassertFor(sender, rec.ts)
     end
     return
@@ -1017,8 +1040,8 @@ local function HandleFull(sender, payload)
     if have then
       local ts = have.ts or 0
       if ts > rec.ts then return end
-      -- the same version: only of use when it brings cooldowns ours lacks
-      if ts == rec.ts and (not AddsCds(rec, have) or not SameApartFromCds(rec, have)) then return end
+      -- the same version: only of use when it brings cooldowns or time played ours lacks
+      if ts == rec.ts and (not (AddsCds(rec, have) or AddsPlayed(rec, have)) or not SameCore(rec, have)) then return end
     end
     if not ns.RelayGate(sender, "D", function() HandleFull(sender, payload) end) then return end
   end

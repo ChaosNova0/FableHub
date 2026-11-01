@@ -221,6 +221,18 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
   tipsText:SetJustifyH("LEFT"); tipsText:SetJustifyV("TOP")
   tipsText:SetSpacing(3)
   Link(tips, "Hide", function() ns.SetOption("homeTips", false); panel:Refresh() end)
+  -- opt-in for sharing time played (Settings > Privacy), until answered
+  local playedRow = CreateFrame("Frame", nil, tips.body)
+  playedRow:SetHeight(22)
+  local playedLabel = T.Text(playedRow, 12, 0.85)
+  playedLabel:SetPoint("LEFT")
+  playedLabel:SetText("Share your time played? (optional)")
+  local playedOn = T.Button(playedRow, "Turn on", 70, 20)
+  playedOn:SetPoint("LEFT", playedLabel, "RIGHT", 10, 0)
+  playedOn:SetScript("OnClick", function() ns.Played.SetSharing(true); panel:Refresh() end)
+  local playedLater = T.Button(playedRow, "Not now", 70, 20)
+  playedLater:SetPoint("LEFT", playedOn, "RIGHT", 6, 0)
+  playedLater:SetScript("OnClick", function() ns.Played.DismissTip(); panel:Refresh() end)
 
   -- Message of the Day
   local motdText = T.Text(motd.body, 12, 0.85)
@@ -611,10 +623,16 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
 
     -- Getting started (only while there's something to do)
     local tipList = ns.Option("homeTips") and ns.HomeTips() or {}
-    if #tipList > 0 then
+    local askPlayed = ns.Played.WantTip()
+    if #tipList > 0 or askPlayed then
       for i, t in ipairs(tipList) do tipList[i] = UI.Colorize("- ", ar, ag, ab) .. t end
       tipsText:SetText(table.concat(tipList, "\n"))
-      tips.want = HEAD + (tipsText:GetStringHeight() or 14) + PAD + 2
+      local textH = #tipList > 0 and (tipsText:GetStringHeight() or 14) or 0
+      playedRow:ClearAllPoints()
+      playedRow:SetPoint("TOPLEFT", tips.body, "TOPLEFT", 0, -(textH > 0 and textH + 4 or 0))
+      playedRow:SetPoint("RIGHT", tips.body, "RIGHT")
+      playedRow:SetShown(askPlayed)
+      tips.want = HEAD + textH + (askPlayed and 26 or 0) + PAD + 2
       leftCards = { tips, motd, news, activity, loot }
       tips:Show()
     else

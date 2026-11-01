@@ -130,6 +130,11 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   L:Header("Raids")
   L:Option("Check buffs and enchants at ready checks", "readyCheckAuto", "Fills the Raids > Ready check page every time a ready check starts. Check now still works when this is off.")
 
+  L:Header("Privacy")
+  L:Toggle("Share my time played with the guild", function() return ns.Option("sharePlayed") end,
+    function(v) ns.Played.SetSharing(v) end,
+    "Off by default. When on, guildmates see your total /played on the roster and, for characters under 60, level progress and XP per hour. Turning it off removes it from everyone's roster on their next sync. Your other characters update the next time you log in on them.")
+
   ------------------------------------------------------------------------
   local R = Column()
   R:Header("Officers")

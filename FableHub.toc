@@ -2,7 +2,7 @@
 ## Title: |cffdca77fFable|rHub
 ## Notes: Guild roster, alts, ready checks, guild bank, professions, raid planner, sign-ups, loot and camping for WoW: Forever. Type /fhub to open.
 ## Author: FableHub
-## Version: 0.23.1
+## Version: 0.24.0
 ## SavedVariables: FableHubDB
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 
@@ -28,6 +28,7 @@ Features\GuildBank.lua
 Features\Scan.lua
 Data\Cooldowns.lua
 Features\Cooldowns.lua
+Features\Played.lua
 Features\RecipeFacts.lua
 Features\ChangeLog.lua
 UI\Theme.lua

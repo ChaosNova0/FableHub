@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.23.1"
+ns.VERSION = "0.24.0"
 ns.PROTOCOL = 1
 -- Data era. Bump this (1 -> 2) in the build released for the live launch:
 -- everyone's saved guild data from the beta is cleared once, and FableHub moves
@@ -192,6 +192,11 @@ function ns.Now()
   return (GetServerTime and GetServerTime()) or time()
 end
 
+-- the level cap (60 on Forever)
+function ns.MaxLevel()
+  return (GetMaxPlayerLevel and GetMaxPlayerLevel()) or MAX_PLAYER_LEVEL or 60
+end
+
 ------------------------------------------------------------------------
 -- Saved data
 --   FableHubDB.guilds[guildKey].members[charKey] = record
@@ -255,7 +260,7 @@ function ns.MyRecord()
 end
 
 -- Store a record received from someone else. Returns true if it was newer
--- (or brought cooldowns our copy of that version lacked).
+-- (or brought cooldowns or time played our copy of that version lacked).
 function ns.StoreRecord(rec)
   local g = ns.GuildDB()
   if not g or not rec or not rec.key then return false end
@@ -272,10 +277,14 @@ function ns.StoreRecord(rec)
         added = true
       end
     end
-    if added then
-      old.cdChecked = math.max(old.cdChecked or 0, rec.cdChecked or 0)
-      ns.Fire("DATA_CHANGED")
+    if added then old.cdChecked = math.max(old.cdChecked or 0, rec.cdChecked or 0) end
+    -- time played (0.24+): the same, filled in only when ours has none (a
+    -- copy passed on by an older client has it stripped; see Played.lua)
+    if rec.played and not old.played then
+      old.played = rec.played
+      added = true
     end
+    if added then ns.Fire("DATA_CHANGED") end
     return added
   end
   if old and (old.ts or 0) > (rec.ts or 0) then return false end
@@ -355,6 +364,7 @@ ns.OPTION_DEFAULTS = {
   lootAnnounce = true,       -- officers: announce awarded loot in raid chat
   alertBankRequest = true,   -- officers: chat message when someone requests a guild bank item
   homeTips = true,           -- "Getting started" card on Home while there's setup left to do
+  sharePlayed = false,       -- share your /played time with the guild (Settings > Privacy)
 }
 function ns.Option(key)
   local s = FableHubDB and FableHubDB.settings
