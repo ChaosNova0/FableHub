@@ -4,6 +4,7 @@
   "workspace.ignoreDir": [".git", "Libs", "tests"],
   "diagnostics.globals": [
     "FABLEHUB_TEST_EPOCH",
+    "FABLEHUB_TEST_SHA256",
     "BOOKTYPE_SPELL",
     "GetAddOnInfo",
     "GetNumSpellTabs",

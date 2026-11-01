@@ -8,8 +8,7 @@
 --   { total, thisLevel, lvl, at, xp?, xpMax?, rested?, sess? }
 -- rec.played only changes inside ns.RecordChanged (via PL.BeforeChange), so
 -- the record's time moves with it: turning sharing off sends a newer record
--- without it, which replaces the old copy everywhere. A copy passed on by an
--- older client (no time played) only ever fills gaps, never removes it.
+-- without it, which replaces the old copy everywhere.
 
 local _, ns = ...
 local PL = {}
@@ -404,8 +403,7 @@ local function TotalOf(key)
   local p = own and own.played
   if own and not p then return nil end
   if not p then
-    local g = ns.GuildDB()
-    local rec = g and g.members[key]
+    local rec = ns.MemberRecord(key)
     p = rec and rec.played
     if not p then return nil end
     local r = ns.roster[key]

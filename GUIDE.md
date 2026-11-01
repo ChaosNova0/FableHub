@@ -107,7 +107,7 @@ Guild roster and profession tracker for WoW: Forever.
   Skill levels share automatically.
 
 ## Commands
-`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` resync · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test which spelling of a name FableHub can whisper (works even if they don't have FableHub) · `/fhub reset` clear stored guild data
+`/fhub minimap` show or hide the minimap button · `/fhub resetwindow` · `/fhub opacity 50-100` window see-through-ness (default 85) · `/fhub sync` check with the guild again and fetch anything you've missed · `/fhub scan` rescan your character · `/fhub status` · `/fhub bug` a report to copy into Discord when something's wrong · `/fhub ping Name` test which spelling of a name FableHub can whisper (works even if they don't have FableHub) · `/fhub reset` clear stored guild data
 
 When guildmates run a newer FableHub, you'll get a chat message and the sidebar shows **update** next to the version.
 
@@ -118,6 +118,10 @@ Bundles LibDeflate (zlib licence) and rxi/json.lua (MIT) to read That's My BIS e
 Each player's addon shares only their own character with the guild, over the hidden addon channel.
 Time played is only shared by players who turn it on in Settings > Privacy, and disappears from everyone's roster when they turn it off.
 Everyone stores what they hear, so you can still see an offline member's professions.
+When you log in, FableHub checks with up to three guildmates (picked at random) and fetches only what's missing or different, split between them. If nothing is, nothing more is sent.
+Each record carries its owner's checksum, so a copy changed by anyone else is refused.
+When your character changes, only the change is sent, not your whole record.
+When you log in after a while, a short summary of everyone arrives first, so the roster and professions fill in within seconds; recipes follow over the next few minutes (the Recipes page says how many are still syncing).
 Nothing is sent during combat or boss fights.
 Officer data (raid nights, loot, announcements, raid plans, attendance) is only accepted from officers, so someone logging in later receives it once an officer with FableHub is online.
 Addon messages from players outside the guild are ignored, and formatting codes are stripped from anything received.

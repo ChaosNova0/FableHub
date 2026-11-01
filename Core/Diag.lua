@@ -262,8 +262,8 @@ function D.Report()
   if g then
     local signups = 0
     for _, list in pairs(g.signups or {}) do signups = signups + Count(list) end
-    add("Members %d, raid nights %d, sign-ups %d, loot %d, craft requests %d, alts %d, bank tabs %d",
-      Count(g.members), Count(g.events), signups, Count(g.loot), Count(g.requests), Count(g.alts),
+    add("Members %d (%d partial, %d summaries heard), raid nights %d, sign-ups %d, loot %d, craft requests %d, alts %d, bank tabs %d",
+      Count(g.members), Count(g.partials), ns.SummariesHeard and ns.SummariesHeard() or 0, Count(g.events), signups, Count(g.loot), Count(g.requests), Count(g.alts),
       Count(g.bank and g.bank.tabs))
   else
     add("No guild data (not in a guild?)")

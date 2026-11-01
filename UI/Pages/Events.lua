@@ -646,7 +646,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
 
   local function ClassOf(key)
     local r = ns.roster[key]
-    local rec = (key == ns.MyKey()) and ns.MyRecord() or (ns.GuildDB() and ns.GuildDB().members[key])
+    local rec = (key == ns.MyKey()) and ns.MyRecord() or ns.MemberRecord(key)
     return (rec and rec.class) or (r and r.class)
   end
 

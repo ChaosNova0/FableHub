@@ -4,29 +4,42 @@
 -- so long payloads can be split across several 255-byte addon messages.
 --
 -- Types
---   H  hello      sent at login:            "<protocol>^<version>^<my record ts>"
+--   H  hello      sent at login:            "<protocol>^<version>^<my record ts>^<its checksum>^<bucket sums>"
+--                 (the sums of what we hold, as in D: a member in sync with
+--                 their relays needs no D, see Catchup.lua)
 --   R  here       reply to a hello:         same payload as H
 --   W  want       ask the owner to rebroadcast their record: "<key>"
 --   F  full       one character record (see Encode.lua)
---   D  digest     "what I already have" list, so one online member can fill gaps
+--   T  delta      (0.26+) the owner's change to their own record, as edits
+--                 to the version everyone holds (see Enc.EncodeDelta)
+--   D  digest     (0.26+) records catch-up request: checksums of what we hold,
+--                 by bucket, and the members we ask to answer (Catchup.lua)
+--   s  sums       a named relay's answer to D (whisper): its sums, and its
+--                 versions of the keys in the buckets where ours differ (or
+--                 digests of those lists)
+--   x  fetch      the records we want from that relay (whisper)
+--   y  done       the relay queued everything for that x (whisper)
+--   E  summaries  (0.25+) records without their recipes, sent ahead of the F
+--                 records in a catch-up answer (see Enc.EncodeSummaryBatch)
 --
 -- Only each character's owner changes their own record. Other users relay
--- copies so data reaches people who were offline at the time.
+-- copies so data reaches people who were offline at the time. Owners
+-- announce the checksum (Hash.lua) of their record's current version in their
+-- hello, record and delta messages, and a copy passed on by someone else must
+-- match the owner's checksum for that version (see HandleFull).
 
 local _, ns = ...
 local Enc = ns.Encode
 
 -- The channel name follows ns.DATA_EPOCH (Core.lua). Bumping the epoch gives a
--- fresh start (the launch build is era 2): older clients talk on the previous
--- era's channel, so their (beta) data can't reach the new one. Hellos still go
--- out on that channel too, so older clients see that a newer FableHub exists.
-local function PrefixFor(epoch) return epoch > 1 and ("FableHub" .. epoch) or "FableHub" end
-local PREFIX = PrefixFor(ns.DATA_EPOCH or 1)
-local LEGACY_PREFIX = PrefixFor(math.max(1, (ns.DATA_EPOCH or 1) - 1))
+-- fresh start: older clients talk on the previous era's channel, so their data
+-- can't reach the new one.
+local PREFIX = "FableHub" .. (ns.DATA_EPOCH or 1)
 ns.PREFIX = PREFIX
 local MAX_MSG = 250
 local HEADER_ROOM = 16
 local CHUNK = MAX_MSG - HEADER_ROOM
+local MAX_RECORD_PARTS = 120 -- parts of one F (MAX_PARTS below)
 
 ns.present = {}          -- [key] = version, FableHub users heard from this session
 local sendQueue = {}
@@ -37,6 +50,12 @@ local sendQueue = {}
 local waitingSig = {}    -- [message signature] = true until its first part is sent
 local waitingRecord = {} -- [character key] = message id of a record broadcast not started yet
 local startedIds = {}    -- [message id] = true once its first part has gone out
+local sentForm = {}      -- [message id] = the spelling its first part was whispered to (the rest follow it)
+local partAt = {}        -- [message id] = GetTime() its latest part went out (until its last does)
+-- Receivers drop a half-received message after about a minute without a
+-- part of it (see the tickers at the bottom). The rest of one of ours held
+-- up longer than this (combat, a boss fight) goes out from its first part again.
+local RESTART_AFTER = 45
 local newerSeen = {}     -- [version] = { [key] = true }, versions above ours (see NoteVersion)
 local buffers = {}       -- partial multi-part messages
 local nextId = math.random(0, 1295)
@@ -64,12 +83,12 @@ local function Paused()
   return false
 end
 
-local function SendRaw(msg, target, prefix)
+local function SendRaw(msg, target)
   local ok, res
   if target then
-    ok, res = pcall(C_ChatInfo.SendAddonMessage, prefix or PREFIX, msg, "WHISPER", target)
+    ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "WHISPER", target)
   else
-    ok, res = pcall(C_ChatInfo.SendAddonMessage, prefix or PREFIX, msg, "GUILD")
+    ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
   end
   if ns.Diag then ns.Diag.NoteSend(ok, res, target) end
   if not ok then
@@ -89,12 +108,23 @@ end
 -- an item leaves the queue (sent or given up on): its message is no longer "waiting"
 local function Dequeue()
   local item = table.remove(sendQueue, 1)
+  partAt[item.id] = GetTime()
   if item.part == 1 then
     startedIds[item.id] = true
     if item.sig then waitingSig[item.sig] = nil end
     if item.recKey and waitingRecord[item.recKey] == item.id then waitingRecord[item.recKey] = nil end
   end
-  if item.part == item.total then startedIds[item.id] = nil end
+  if item.part == item.total then startedIds[item.id], sentForm[item.id], partAt[item.id] = nil, nil, nil end
+end
+
+-- the message at the front of the queue started too long ago for its
+-- receivers to still hold its first parts: put those back in front of it
+local function Restart(item)
+  for p = item.part - 1, 1, -1 do
+    table.insert(sendQueue, 1, { msg = item.all[p], target = item.target, form = item.form, id = item.id, part = p,
+                                 total = item.total, front = item.front, all = item.all })
+  end
+  partAt[item.id] = nil
 end
 
 local function Pump()
@@ -104,9 +134,16 @@ local function Pump()
   lastRegen = now
   while tokens >= 1 and #sendQueue > 0 do
     local item = sendQueue[1]
-    local to = item.form or (item.target and ns.WhisperTarget(item.target))
+    if item.part > 1 and item.all and partAt[item.id] and now - partAt[item.id] > RESTART_AFTER then
+      Restart(item)
+      item = sendQueue[1]
+    end
+    -- (every part of a whisper to the same spelling: one that fails partway
+    -- fails whole, and goes again whole, see Catchup.lua)
+    local to = item.form or (item.target and (sentForm[item.id] or ns.WhisperTarget(item.target)))
+    if to and item.target and item.part == 1 and item.total > 1 then sentForm[item.id] = to end
     if to then ns.NoteWhisper(to, item.target) end
-    local result = SendRaw(item.msg, to, item.prefix)
+    local result = SendRaw(item.msg, to)
     if not to and result == "ok" and not firstGuildSend then
       firstGuildSend = GetTime()
       C_Timer.After(20, function() ns.CheckGuildEcho() end)
@@ -130,6 +167,11 @@ local function Pump()
     if result == "ok" and item.target then lastSendTo[item.target] = GetTime() end
     Dequeue()
     tokens = tokens - 1
+    -- the whole message is out (see QueueMsg opts.onSent)
+    if result == "ok" and item.onSent then
+      local ok, err = pcall(item.onSent)
+      if not ok then ns.ReportError(err) end
+    end
   end
 end
 
@@ -171,50 +213,92 @@ local function Unqueue(id)
   return true
 end
 
--- recKey: a character record broadcast, which replaces an older one still waiting
--- front: goes out ahead of everything waiting (parts are reassembled by
--- message id, so it can't mix into a message already being sent)
-function Queue(msgType, payload, target, prefix, form, recKey, front)
+-- where a message queued with front = "after" goes: past the rest of a
+-- message already being sent (so it isn't held up) and past what was put in
+-- front before it (replies, and earlier "after" messages, which keep their order)
+local function AfterFront()
+  local i = 1
+  while sendQueue[i] and (startedIds[sendQueue[i].id] or sendQueue[i].front) do i = i + 1 end
+  return i
+end
+
+-- how many parts queued with front = "after" are still waiting (they're all
+-- within the part of the queue AfterFront skips)
+local function AfterParts()
+  local i, n = 1, 0
+  while sendQueue[i] and (startedIds[sendQueue[i].id] or sendQueue[i].front) do
+    if sendQueue[i].front == "after" then n = n + 1 end
+    i = i + 1
+  end
+  return n
+end
+
+-- Queues a message; returns its id (nil when nothing was queued, or with the
+-- guild channel muted, when it goes out as several whispers). opts (all optional):
+--   target  a member's key: an addon whisper to them, not the guild
+--   form    the spelling of their name to whisper (for /fhub ping)
+--   recKey  a character record broadcast, which replaces an older one still waiting
+--   front   true = goes out ahead of everything waiting (parts are reassembled by
+--           message id, so it can't mix into a message already being sent);
+--           "after" = ahead of everything but what AfterFront skips
+--   dig     the catch-up request type this message counts as (default: the
+--           message type, for the DIGESTS letters)
+--   onSent  called once the message's last part went out
+function Queue(msgType, payload, opts)
   payload = payload or ""
+  opts = opts or {}
+  local target, form, recKey, front = opts.target, opts.form, opts.recKey, opts.front
   -- our own catch-up request (features send theirs through ns.Send too)
-  local dig = DIGESTS[msgType] and not prefix and msgType or nil
+  local dig = opts.dig or (DIGESTS[msgType] and msgType) or nil
   if dig then
     digestSentAt[dig] = GetTime()
     lastDigestAt = GetTime()
   end
-  if not target and ns.guildMuted and not prefix then
-    for _, key in ipairs(WhisperPeers(msgType == "H")) do Queue(msgType, payload, key, nil, nil, recKey, front) end
-    return
+  if not target and ns.guildMuted then
+    local peers = WhisperPeers(msgType == "H")
+    for i, key in ipairs(peers) do
+      -- (onSent once the last of them went out)
+      Queue(msgType, payload, { target = key, recKey = recKey, front = front, dig = opts.dig,
+                                onSent = i == #peers and opts.onSent or nil })
+    end
+    return nil
   end
-  local sig = table.concat({ msgType, target or "", prefix or "", form or "", payload }, "\1")
-  if waitingSig[sig] then return end -- the exact same message is already waiting
+  local sig = table.concat({ msgType, target or "", form or "", payload }, "\1")
+  if waitingSig[sig] then return nil end -- the exact same message is already waiting
   local recSlot = recKey and ((target or "") .. "\1" .. recKey)
   if recSlot and waitingRecord[recSlot] then Unqueue(waitingRecord[recSlot]) end
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
+  local at = front == "after" and AfterFront() or 1
+  -- (every part's text, shared by its parts: see Restart)
+  local all = total > 1 and {} or nil
   for i = 1, total do
     local part = payload:sub((i - 1) * CHUNK + 1, i * CHUNK)
-    table.insert(sendQueue, front and i or #sendQueue + 1, { msg = table.concat({ msgType, id, i, total, part }, "#"), target = target, prefix = prefix,
-                              form = form, id = id, part = i, total = total,
+    local msg = table.concat({ msgType, id, i, total, part }, "#")
+    if all then all[i] = msg end
+    table.insert(sendQueue, front and (at + i - 1) or #sendQueue + 1, { msg = msg, target = target,
+                              form = form, id = id, part = i, total = total, front = front or nil, all = all,
                               sig = i == 1 and sig or nil, recKey = i == 1 and recSlot or nil,
-                              dig = i == total and dig or nil })
+                              dig = i == total and dig or nil, onSent = i == total and opts.onSent or nil })
   end
   waitingSig[sig] = true
   if recSlot then waitingRecord[recSlot] = id end
   queuedCount = queuedCount + 1
+  return id
 end
+ns.QueueMsg = Queue
 
 -- to the whole guild
-function ns.Send(msgType, payload) Queue(msgType, payload, nil) end
+function ns.Send(msgType, payload) return Queue(msgType, payload) end
 
 -- to one member only (addon whisper): for data not everyone may see
 function ns.SendTo(target, msgType, payload)
-  if target and target ~= ns.MyKey() then Queue(msgType, payload, target) end
+  if target and target ~= ns.MyKey() then return Queue(msgType, payload, { target = target }) end
 end
 
 -- to one member using a given spelling of their name (for /fhub ping)
 function ns.SendToForm(target, form, msgType, payload)
-  if target and form and target ~= ns.MyKey() then Queue(msgType, payload, target, nil, form) end
+  if target and form and target ~= ns.MyKey() then return Queue(msgType, payload, { target = target, form = form }) end
 end
 
 ------------------------------------------------------------------------
@@ -317,23 +401,157 @@ end
 
 function ns.QueueLength() return #sendQueue end
 
+-- is message `id` still waiting in our queue (not all of it sent, not dropped)?
+local function Waiting(id)
+  if not id then return false end
+  for i = 1, #sendQueue do if sendQueue[i].id == id then return true end end
+  return false
+end
+
+-- has part of message `id` gone out, and part not yet?
+local function Started(id) return id ~= nil and startedIds[id] == true end
+
+-- drop what's left of message `id` (even part way out: its whisper failed)
+local function Cancel(id)
+  if not id then return end
+  for i = #sendQueue, 1, -1 do
+    local item = sendQueue[i]
+    if item.id == id then
+      table.remove(sendQueue, i)
+      if item.sig then waitingSig[item.sig] = nil end
+      if item.recKey and waitingRecord[item.recKey] == id then waitingRecord[item.recKey] = nil end
+    end
+  end
+  startedIds[id], sentForm[id], partAt[id] = nil, nil, nil
+end
+
 ------------------------------------------------------------------------
 -- Higher level messages
+--
+-- Our own record. What we send is always its canonical text (Encode.lua
+-- Enc.Canon), with its checksum (Hash.lua), worked out again only when the
+-- text changes:
+--   own.ts / own.text / own.hash  the version last worked out (Own.Refresh)
+--   own.base    { ts, text, hash }: the version the guild holds, as far as we
+--               know (our hello's, then each record or delta of ours that
+--               started going out). Deltas (T) are edits to it. Kept in memory
+--               only: after a /reload it's the hello's version again.
+--   own.queued  { ver, id, full }: our last record or delta queued (ver: its
+--               version, id: the message, full: an F rather than a T)
 ------------------------------------------------------------------------
-local HelloPayload
--- after a fresh start (new channel), also say hello on the old channel so
--- members still on an older FableHub are told to update
-local function LegacyHello()
-  if PREFIX ~= LEGACY_PREFIX then Queue("H", HelloPayload(), nil, LEGACY_PREFIX) end
-end
+local own = {}
+local ownJob -- the checksum being worked out: { text, ts, cbs }
+function ns.OwnState() return own end
 
-function HelloPayload()
+-- cb({ ts, text, hash }) with our record's current version, once its checksum
+-- is known (at once when nothing changed)
+local function OwnRefresh(cb)
   local rec = ns.MyRecord()
-  return table.concat({ ns.PROTOCOL, ns.VERSION, Enc.ToB36(rec and rec.ts or 0), ns.MyKey() or "" }, "^")
+  if not rec then return end
+  local text = Enc.Canon(Enc.EncodeRecord(rec))
+  if not text then return end
+  -- the record changed without its time moving on (changed in place): move it
+  -- on, so two different versions never share a time
+  if own.text and text ~= own.text and (rec.ts or 0) == own.ts then
+    rec.ts = math.max(ns.Now(), own.ts + 1)
+    text = Enc.Canon(Enc.EncodeRecord(rec))
+  end
+  if text == own.text and own.hash then
+    cb({ ts = own.ts, text = own.text, hash = own.hash })
+    return
+  end
+  if ownJob and ownJob.text == text then
+    ownJob.cbs[#ownJob.cbs + 1] = cb
+    return
+  end
+  -- (a checksum still being worked out for an older text: its callers get this one)
+  local job = { text = text, ts = rec.ts or 0, cbs = ownJob and ownJob.cbs or {} }
+  if ownJob then ownJob.dead = true end
+  job.cbs[#job.cbs + 1] = cb
+  ownJob = job
+  ns.Hash.Queue(text, function(h)
+    if job.dead then return end
+    ownJob = nil
+    own.ts, own.text, own.hash = job.ts, job.text, h
+    for _, fn in ipairs(job.cbs) do
+      local ok, err = pcall(fn, { ts = job.ts, text = job.text, hash = h })
+      if not ok then ns.ReportError(err) end
+    end
+  end, true)
+end
+ns.OwnRefresh = OwnRefresh
+
+-- "<PROTOCOL>^<VERSION>^<ts36>^<h16>^<sums>": our record's version and
+-- checksum, and the bucket sums of every record we hold (Catchup.lua
+-- C.HelloSums; "" when unknown), which let a member whose sums are the same
+-- as their relays' skip their catch-up request (D)
+local function HelloPayload(sums)
+  local ts, h = own.ts, own.hash
+  -- (checksums can't be worked out on this computer, see Hash.lua: none announced)
+  if ns.Hash.broken then h, sums = nil, nil end
+  if not h then
+    local rec = ns.MyRecord()
+    ts, h = rec and rec.ts or 0, ""
+  end
+  local text = table.concat({ ns.PROTOCOL, ns.VERSION, Enc.ToB36(ts), h, sums or "" }, "^")
+  -- (one part: about 175 characters with a 16-character version, so this
+  -- can't happen; if it ever did, the sums go)
+  if #text > CHUNK then text = table.concat({ ns.PROTOCOL, ns.VERSION, Enc.ToB36(ts), h, "" }, "^") end
+  return text
 end
 
-function ns.BroadcastRecord(rec)
-  if rec then Queue("F", Enc.EncodeRecord(rec), nil, nil, nil, rec.key) end
+-- Our hello (H) or reply to hellos (R), once the checksums still being worked
+-- out are done (the sums count them)
+local function QueueHello(msgType, opts)
+  local C = ns.Catchup
+  local function Go(sums) Queue(msgType, HelloPayload(sums), opts) end
+  if C and C.HelloSums then C.HelloSums(Go) else Go(nil) end
+end
+
+-- Sends our record: a delta (T) from own.base when that's small, else whole
+-- (F). forceFull: whole (someone asked for it, or a correction).
+local CHUNK_PARTS_T = 3 -- a delta over this many parts goes as the whole record
+local function SendOwn(forceFull)
+  local me = ns.MyKey()
+  if not me then return end
+  ns.MirrorMyRecord()
+  OwnRefresh(function(cur)
+    local slot = "\1" .. me
+    local q = own.queued
+    local waiting = q and q.id ~= nil and waitingRecord[slot] == q.id
+    -- what we queued last has started going out: the guild holds that version now
+    if q and not waiting then own.base, own.queued, q = q.ver, nil, nil end
+    -- this version is already waiting to go out whole
+    if q and q.full and q.ver.hash == cur.hash then return end
+    if not forceFull then
+      -- nothing new: what's waiting (or the version everyone holds) is this one
+      if q and q.ver.hash == cur.hash then return end
+      if not q and own.base and own.base.hash == cur.hash and own.base.ts == cur.ts then return end
+    end
+    -- (a whole record still waiting goes whole again: whoever asked for it
+    -- may not hold the base)
+    -- (deltas carry checksums: with none worked out here, always whole)
+    local full = forceFull or (q and q.full) or ns.guildMuted or not own.base or own.base.ts >= cur.ts
+      or ns.Hash.broken
+    local p = not full and Enc.EncodeDelta(own.base, cur, me)
+    if p and not (#p <= CHUNK_PARTS_T * CHUNK and #p < #cur.text / 2) then p = nil end
+    local id
+    if p then
+      id = Queue("T", p, { recKey = me, front = "after" })
+    else
+      id = Queue("F", cur.text, { recKey = me })
+    end
+    own.queued = { ver = cur, id = id, full = not p }
+  end)
+end
+ns.SendOwn = SendOwn
+
+-- text: the record already encoded. Our own record goes through SendOwn
+-- (always its canonical text, and the delta base moves with it).
+function ns.BroadcastRecord(rec, text)
+  if not rec then return end
+  if rec.key == ns.MyKey() and rec == ns.MyRecord() then return SendOwn(true) end
+  Queue("F", text or Enc.EncodeRecord(rec), { recKey = rec.key })
 end
 
 -- Debounced broadcast of our own record after it changes.
@@ -344,22 +562,13 @@ function ns.QueueOwnBroadcast(delay)
   ownPending = true
   C_Timer.After(delay or 8, function()
     ownPending = false
-    ns.BroadcastRecord(ns.MyRecord())
+    SendOwn(false)
   end)
 end
 
-local function SendDigest()
-  local g = ns.GuildDB()
-  if not g then return end
-  local others = {}
-  for key, rec in pairs(g.members) do
-    if key ~= ns.MyKey() then others[key] = rec end
-  end
-  ns.Send("D", Enc.EncodeDigest(others))
-end
-
--- One online member answers each digest so the guild isn't flooded:
--- the alphabetically first FableHub user who is online, not counting the asker.
+-- One online member answers each feature digest so the guild isn't flooded:
+-- the alphabetically first FableHub user who is online, not counting the
+-- asker. (Records catch-up names its own relays, see Catchup.lua.)
 ns.CommHandlers = {}   -- extra message types registered by other modules
 
 -- the member on the newest FableHub answers (older versions can't relay newer
@@ -586,16 +795,39 @@ function ns.AmOfficerRelayFor(requester, feature)
   return BestRelay(requester, function(key) return RealAllowed(key, feature) end) == me
 end
 
--- Is `sender` the member who answers our catch-up (or the next in line, in
--- case our view of who's online differs a little from theirs)? Second-hand
--- copies of other people's data that aren't from an officer are only taken
--- from them. nil = we haven't heard their hello yet, so we can't tell.
-function ns.IsMyRelay(sender)
-  if not ns.present[sender] then return nil end
+-- The members whose second-hand copies we take for our catch-up of kind `d`
+-- (a DIGESTS letter; "D", records, when left out): { [key] = true }. While
+-- our records catch-up runs (Catchup.lua), the relays it named for it.
+-- Otherwise the member who answers (BestRelay) and the next in line, in case
+-- our view of who's online differs a little from theirs; for records leaving
+-- out members caught sending wrong copies this session.
+function ns.RelaySet(d)
+  d = d or "D"
+  local C = ns.Catchup
+  if d == "D" and C and C.Active() then return C.Relays() end
   local me = ns.MyKey()
-  local first = BestRelay(me)
-  if sender == first then return true end
-  return BestRelay(me, function(key) return key ~= first end) == sender
+  local bad = d == "D" and C and C.IsBad or nil
+  local function ok(key) return not (bad and bad(key)) end
+  local set = {}
+  local first = BestRelay(me, ok)
+  if first then
+    set[first] = true
+    local second = BestRelay(me, function(key) return key ~= first and ok(key) end)
+    if second then set[second] = true end
+  end
+  return set
+end
+
+-- Is `sender` in that set? Second-hand copies of other people's data that
+-- aren't from an officer are only taken from them. nil = we haven't heard
+-- their hello yet, so we can't tell (while our records catch-up runs, a
+-- member it didn't name just isn't one: false).
+function ns.IsMyRelay(sender, d)
+  d = d or "D"
+  local C = ns.Catchup
+  if d == "D" and C and C.Active() then return C.Relays()[sender] == true end
+  if not ns.present[sender] then return nil end
+  return ns.RelaySet(d)[sender] == true
 end
 
 -- Second-hand data (copies of other people's records, sign-ups, links,
@@ -642,14 +874,35 @@ local function CatchUpOpen(digestType, sender)
   return u ~= nil and (u[digestType] or 0) >= now
 end
 
+-- RelayActive runs for every part of every message: the relay sets it needs
+-- are worked out once per moment (GetTime() value) and kind, and again after
+-- a hello or a roster change
+local setCacheAt, setCache = nil, {}
+local function DropRelayCache() setCacheAt = nil end
+ns.On("ROSTER_CHANGED", DropRelayCache)
+local function IsMyRelayCached(sender, d)
+  local C = ns.Catchup
+  if d == "D" and C and C.Active() then return C.Relays()[sender] == true end
+  if not ns.present[sender] then return nil end
+  local now = GetTime()
+  if setCacheAt ~= now then setCacheAt, setCache = now, {} end
+  local set = setCache[d]
+  if not set then
+    set = ns.RelaySet(d)
+    setCache[d] = set
+  end
+  return set[sender] == true
+end
+
 -- we heard from `sender` as (possibly) our relay: their windows still open
--- stay open CATCHUP_WINDOW seconds more
+-- stay open CATCHUP_WINDOW seconds more (each kind they may be our relay for:
+-- yes, or not known yet)
 local function RelayActive(sender)
   if not sender or GetTime() - lastDigestAt > CATCHUP_MAX then return end
   local closes = GetTime() + CATCHUP_WINDOW
   local u = relayUntil[sender]
   for d in pairs(DIGESTS) do
-    if CatchUpOpen(d, sender) then
+    if CatchUpOpen(d, sender) and IsMyRelayCached(sender, d) ~= false then
       if not u then u = {}; relayUntil[sender] = u end
       if (u[d] or 0) < closes then u[d] = closes end
     end
@@ -660,11 +913,11 @@ function ns.RelayGate(sender, digestType, replay)
   if type(sender) ~= "string" or IsLoose(sender) then return false end
   if ns.Plans and ns.Plans.IsOfficer(sender) then
     -- (an officer who is also our relay: still answering our catch-up)
-    if CatchUpOpen(digestType, sender) and ns.IsMyRelay(sender) then relayAnsweredAt[digestType] = GetTime() end
+    if CatchUpOpen(digestType, sender) and ns.IsMyRelay(sender, digestType) then relayAnsweredAt[digestType] = GetTime() end
     return true
   end
   if not CatchUpOpen(digestType, sender) then return false end
-  local relay = ns.IsMyRelay(sender)
+  local relay = ns.IsMyRelay(sender, digestType)
   if relay then
     relayAnsweredAt[digestType] = GetTime()
     RelayActive(sender)
@@ -682,23 +935,30 @@ function ns.RelayGate(sender, digestType, replay)
   return nil
 end
 
--- `sender`'s hello arrived: run their waiting replays if they're our relay,
--- drop them if not (still unknown: keep waiting)
+-- `sender`'s hello arrived: run their waiting replays of each kind they're
+-- our relay for, drop those of kinds they aren't (still unknown: keep waiting)
 local function FlushReplays(sender)
   if not sender then return end
-  local relay = ns.IsMyRelay(sender)
-  if relay == nil then return end
   -- (windows kept open for them before their hello, see OnAddonMessage)
-  if not relay then relayUntil[sender] = nil end
+  local u = relayUntil[sender]
+  if u then
+    for d in pairs(u) do
+      if ns.IsMyRelay(sender, d) == false then u[d] = nil end
+    end
+  end
   local list = pendingReplays[sender]
   if not list then return end
-  pendingReplays[sender] = nil
-  if not relay then
-    ns.Debug(("dropped %d catch-up messages from %s (not our relay)"):format(#list, sender))
-    return
-  end
-  local r1, r2, r3, r4 = ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose
+  local keep, run, dropped = {}, {}, 0
   for _, e in ipairs(list) do
+    local relay = ns.IsMyRelay(sender, e.dig)
+    if relay == nil then keep[#keep + 1] = e
+    elseif relay then run[#run + 1] = e
+    else dropped = dropped + 1 end
+  end
+  pendingReplays[sender] = keep[1] and keep or nil
+  if dropped > 0 then ns.Debug(("dropped %d catch-up messages from %s (not our relay)"):format(dropped, sender)) end
+  local r1, r2, r3, r4 = ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose
+  for _, e in ipairs(run) do
     if CatchUpOpen(e.dig, sender) then
       relayAnsweredAt[e.dig] = GetTime()
       ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose = e.msgType, e.payload, e.from, e.loose
@@ -733,10 +993,7 @@ function ns.RegisterDigest(fn) digests[#digests + 1] = fn end
 -- Receiving
 ------------------------------------------------------------------------
 local helloAnswered = {}    -- [key] = { t, n }: our replies to their hellos (see HandleHello)
-local replyDue = {}         -- [key] = GetTime() of a hello of theirs we owe a reply to
-local frontedAt = {}        -- [key] = GetTime() we last sent them a reply ahead of the queue (see Dispatch)
-local FRONT_GAP = 60
-local lastReplyAt = -1      -- GetTime() we last queued a reply (R)
+local lastReplyAt = -1     -- GetTime() we last queued a reply (R)
 local wantedRecently = {}   -- [key] = GetTime() when we decided to ask for it
 local wantSeen = {}         -- [key] = GetTime() when someone else asked for it
 local answeredWant = 0
@@ -745,14 +1002,90 @@ local reassertFrom = {}     -- [sender] = GetTime() their digest or record copy 
 -- the message being handled came from a sender resolved exactly to the roster
 -- (ResolveSender's "exact"); set by OnAddonMessage
 local receivingExact = false
+local presentProto = {}     -- [key] = the sync protocol their latest hello gave
+local helloExact = {}       -- [key] = their latest hello came from their exact name
+local ownerHeardAt = {}     -- [key] = GetTime() we last took their own checksum from their hello
+-- what their latest hello told us: protocol, whether it came from their exact
+-- name, and when we last took their own checksum from one (nil: never)
+function ns.HelloInfo(key) return presentProto[key], helloExact[key], ownerHeardAt[key] end
+
+------------------------------------------------------------------------
+-- Owners' checksums (Core.lua g.owner): the version and checksum each
+-- character's owner last announced first-hand (their hello, record or
+-- delta, from their exact name). Never taken from anyone passing it on.
+------------------------------------------------------------------------
+local MAX_TS = 4294967296
+local function ValidHash(h) return type(h) == "string" and #h == 16 and h:find("^[0-9a-f]+$") ~= nil end
+
+-- the owner's announced version of `key`: ts, hash (nil if none)
+local function OwnerHash(key, g)
+  g = g or ns.GuildDB()
+  local v = g and g.owner and g.owner[key]
+  if type(v) ~= "string" then return nil end
+  local ts36, h = v:match("^(%w+):(%x+)$")
+  local ts = Enc.Num(ts36, MAX_TS)
+  if not ts or not ValidHash(h) then return nil end
+  return ts, h
+end
+ns.OwnerHash = OwnerHash
+
+-- replaced only by the same or a newer version (roster members only);
+-- force: the owner's own whole record, which is their latest word even when
+-- older (see HandleFull)
+local function SetOwnerHash(key, ts, h, force)
+  local g = ns.GuildDB()
+  if not g or not key or key == ns.MyKey() or not ValidHash(h) or type(ts) ~= "number" then return end
+  if next(ns.roster) and not ns.roster[key] then return end
+  local cur = OwnerHash(key, g)
+  if cur and cur > ts and not force then return end
+  g.owner[key] = Enc.ToB36(ts) .. ":" .. h
+end
+
+-- the owner is online and we took their checksum from their hello this
+-- session (their word on their version is current)
+local function OwnerLive(key)
+  return ownerHeardAt[key] ~= nil and ns.IsOnline(key)
+end
+
+-- The checksum a copy of `key`'s version `ts` must have: the owner's, when
+-- that's the version they announced; else what a records catch-up expects
+-- from `sender` (Catchup.lua, when loaded). nil: nothing to check against
+-- (always, when checksums can't be worked out here: Hash.lua H.broken).
+local function ExpectedHash(key, ts, sender)
+  if ns.Hash.broken then return nil end
+  local ots, oh = OwnerHash(key)
+  if ots == ts then return oh end
+  local C = ns.Catchup
+  if C and C.Expect then return C.Expect(key, ts, sender) end
+  return nil
+end
+ns.ExpectedHash = ExpectedHash
+
+-- A member left the guild (Cleanup.lua): forget what the sync code keeps
+-- about them (catch-up state too, when Catchup.lua is loaded)
+function ns.ForgetMemberSync(key, g)
+  g = g or ns.GuildDB()
+  if g and g.owner then g.owner[key] = nil end
+  presentProto[key], helloExact[key], ownerHeardAt[key] = nil, nil, nil
+  local C = ns.Catchup
+  if C and C.Forget then
+    local ok, err = pcall(C.Forget, key, g)
+    if not ok then ns.ReportError(err) end
+  end
+end
+ns.On("MEMBERS_FORGOTTEN", function(keys)
+  local g = ns.GuildDB()
+  for _, key in ipairs(type(keys) == "table" and keys or {}) do ns.ForgetMemberSync(key, g) end
+end)
 
 -- Our reply to hellos heard at or after `since` (one reply on the guild
--- channel answers everyone who said hello before it). front: ahead of
--- everything waiting to go out (see Dispatch)
-local function SendReply(since, front)
+-- channel answers everyone who said hello before it). It goes ahead of
+-- everything waiting ("after" the message being sent): members only name
+-- us for their catch-up once they heard it (Catchup.lua).
+local function SendReply(since)
   if lastReplyAt >= since then return end
   lastReplyAt = GetTime()
-  Queue("R", HelloPayload(), nil, nil, nil, nil, front)
+  QueueHello("R", { front = "after" })
 end
 
 -- Catch-up answers re-send a lot, so there's a budget: once a request got an
@@ -815,27 +1148,55 @@ ns.NoteVersion = NoteVersion
 -- meanwhile. When someone else asked first, wait a little for the owner's
 -- answer to them; ask ourselves if it doesn't come (the owner may have
 -- turned that member's ask down, see HandleWant).
+-- hash: the owner's checksum of that version: our copy of the same version
+-- is wanted too when its checksum differs (a wrong copy)
+-- force: ask even when we hold that version or a newer one (two copies of
+-- one version and nothing to tell which is right; or the owner says they
+-- have an older one than ours): only the owner's own record settles it.
+-- Then only a copy of that version with checksum `hash` (when given) counts.
 local WANT_WAIT = 8
-local function WantIfStill(key, theirTs, scheduled, waited)
+local function WantIfStill(key, theirTs, scheduled, waited, hash, force)
   local g = ns.GuildDB()
   local have = g and g.members[key]
-  if have and (have.ts or 0) >= theirTs then return end
+  if have then
+    local ts = have.ts or 0
+    if force then
+      if ts == theirTs and hash and have.hash == hash then return end
+    else
+      if ts > theirTs then return end
+      if ts == theirTs and (not hash or not have.hash or have.hash == hash) then return end
+    end
+  end
   if not waited and (wantSeen[key] or 0) >= scheduled then
-    C_Timer.After(WANT_WAIT, function() WantIfStill(key, theirTs, scheduled, true) end)
+    C_Timer.After(WANT_WAIT, function() WantIfStill(key, theirTs, scheduled, true, hash, force) end)
     return
   end
   ns.Send("W", key)
 end
 
+-- Every W we send goes through here: each key at most once per WANT_GAP
+-- seconds (also after someone else asked for it, see HandleWant), after a
+-- small random delay so several members don't all ask at once (whoever asks
+-- first, the others wait for the owner's answer to them: WantIfStill).
+local WANT_GAP = 30
+local function Want(key, theirTs, hash, force)
+  if not key or key == ns.MyKey() or type(theirTs) ~= "number" then return end
+  local t = wantedRecently[key]
+  if t and GetTime() - t < WANT_GAP then return end
+  local scheduled = GetTime()
+  wantedRecently[key] = scheduled
+  C_Timer.After(1 + math.random() * 3, function() WantIfStill(key, theirTs, scheduled, false, hash, force) end)
+end
+
 local function HandleHello(sender, payload, isReply)
   local f = Enc.Split(payload, "^")
   local proto = tonumber(f[1]) or 0
-  -- The key they claim (f[4]) is never used: only the name the game gives us,
-  -- as we resolved it (so nobody can be noted as present, or as running some
-  -- version, under someone else's name). Versions only count from senders
-  -- matched exactly to the roster (see VersionConfirmed).
-  -- A version that isn't "1.2" / "1.2.3" (at most 16 characters, as on the
-  -- legacy channel) is ignored: it's shown in the UI and compared.
+  -- Only the name the game gives us counts, as we resolved it (so nobody can
+  -- be noted as present, or as running some version, under someone else's
+  -- name). Versions only count from senders matched exactly to the roster
+  -- (see VersionConfirmed).
+  -- A version that isn't "1.2" / "1.2.3" (at most 16 characters) is
+  -- ignored: it's shown in the UI and compared.
   local ver = f[2]
   if ver and (#ver > 16 or not ver:match("^%d+%.%d+%.?%d*$")) then ver = nil end
   ns.present[sender] = ver or "?"
@@ -844,39 +1205,65 @@ local function HandleHello(sender, payload, isReply)
   if g then
     g.addonUsers[sender] = { version = ver, seen = ns.Now() }
   end
+  presentProto[sender] = proto
+  helloExact[sender] = receivingExact
+  DropRelayCache()
   -- catch-up answers of theirs that arrived before this hello (see RelayGate)
   FlushReplays(sender)
   if proto ~= ns.PROTOCOL then return end
 
-  -- do we need their record?
-  local theirTs = Enc.FromB36(f[3])
+  -- their own record's version and checksum: the owner's word on it (only
+  -- from their exact name, never one matched by first name)
+  local theirTs = Enc.Num(f[3], MAX_TS) or 0
+  local theirHash = f[4]
+  local announced = receivingExact and not IsLoose(sender) and theirTs > 0 and ValidHash(theirHash)
+    and ns.TimeOK(theirTs)
+  if announced then
+    SetOwnerHash(sender, theirTs, theirHash)
+    ownerHeardAt[sender] = GetTime()
+  end
+  -- their bucket sums (Catchup.lua: when every relay a catch-up picks has the
+  -- same sums as ours, it needs no D). Only from their exact name.
+  local C = ns.Catchup
+  if C and C.NoteHelloSums and receivingExact and not IsLoose(sender) then C.NoteHelloSums(sender, f[5]) end
+
+  -- do we need their record? (newer than ours, or ours of that version is
+  -- a wrong copy)
   local have = g and g.members[sender]
-  if theirTs > 0 and (not have or (have.ts or 0) < theirTs) then
-    local t = wantedRecently[sender]
-    if not t or GetTime() - t > 30 then
-      local scheduled = GetTime()
-      wantedRecently[sender] = scheduled
-      -- small random delay so several people don't all ask at once
-      C_Timer.After(1 + math.random() * 3, function() WantIfStill(sender, theirTs, scheduled, false) end)
-    end
+  -- a summary of theirs newer than the version they say they have is wrong
+  -- (the owner is the authority on that): dropped, unless our whole copy is
+  -- newer still (then it's the hello that's out of date)
+  local part = g and g.partials and g.partials[sender]
+  if receivingExact and part and theirTs > 0 and theirTs < (part.ts or 0)
+    and (not have or (have.ts or 0) <= theirTs) then
+    g.partials[sender] = nil
+    ns.Debug(("dropped a summary of %s newer than their own record"):format(sender))
+  end
+  local wrongCopy = announced and have and (have.ts or 0) == theirTs and have.hash and have.hash ~= theirHash
+  if theirTs > 0 and (not have or (have.ts or 0) < theirTs or wrongCopy) then
+    Want(sender, theirTs, announced and theirHash or nil)
+  elseif announced and have and (have.ts or 0) > theirTs then
+    -- ours claims to be newer than what the owner has: a forgery, or data
+    -- from another computer of theirs. Their own record replaces it.
+    Want(sender, theirTs, theirHash, true)
   end
 
   -- answer each member's hello at most 3 times in 5 minutes: enough for a
   -- /reload or two (a reloaded client needs our reply to know we're here),
   -- but a repeated hello can't make every FableHub user reply every time
-  -- (past that, the reply still goes out right before our answer if they ask
-  -- us for catch-up: they need it to take our answers, see Dispatch; that
-  -- path has its own limits, FRONT_GAP, DIGEST_GAP and ANSWER_GAP)
   if not isReply then
     local now, a = GetTime(), helloAnswered[sender]
     if not a or now - a.t > 300 then a = { t = now, n = 0 }; helloAnswered[sender] = a end
-    -- (sent at once instead if they ask us for catch-up first, see Dispatch)
     local heard = GetTime()
-    replyDue[sender] = heard
     if a.n < 3 then
       a.n = a.n + 1
       C_Timer.After(1 + math.random() * 4, function() SendReply(heard) end)
     end
+  end
+  -- a records catch-up waiting for someone to answer it (Catchup.lua)
+  if C and C.OnHello then
+    local ok, err = pcall(C.OnHello, sender)
+    if not ok then ns.ReportError(err) end
   end
   ns.Fire("DATA_CHANGED")
 end
@@ -890,7 +1277,7 @@ local function HandleWant(sender, key)
     local now = GetTime()
     if now - answeredWant > 10 and (not wantFrom[sender] or now - wantFrom[sender] > ANSWER_GAP) then
       answeredWant, wantFrom[sender] = now, now
-      ns.BroadcastRecord(ns.MyRecord())
+      SendOwn(true)
     end
   end
 end
@@ -899,167 +1286,384 @@ end
 -- stale data from another client): make ours newer and send it again, so the
 -- real one wins everywhere. Counts toward the answer budget (when it's used
 -- up, the re-send waits for the next minute).
--- (defined before HandleDigest, which calls it)
+-- At most one re-send every REASSERT_GAP seconds in all: re-sends asked for
+-- meanwhile are one, sent when that time is up.
+local REASSERT_GAP = 30
 local reasserting = false
+local lastReassertAt = -1e9
 local function ReassertMine(theirTs)
   local mine = ns.MyRecord()
   if not mine then return end
   if (mine.ts or 0) <= theirTs then mine.ts = theirTs + 1 end
   if reasserting then return end -- already on its way (it reads the record when it goes)
   reasserting = true
-  local delay = 3
-  if OverBudget(nil) then delay = math.max(3, 61 - (GetTime() - answerWindow)) end
+  local delay = math.max(3, REASSERT_GAP - (GetTime() - lastReassertAt))
+  if OverBudget(nil) then delay = math.max(delay, 61 - (GetTime() - answerWindow)) end
   C_Timer.After(delay, function()
     reasserting = false
+    lastReassertAt = GetTime()
     CountAnswer(nil)
-    ns.MirrorMyRecord()
-    ns.BroadcastRecord(ns.MyRecord())
+    SendOwn(true)
   end)
 end
 ns.ReassertMine = ReassertMine
 
--- ReassertMine because of `sender`'s digest or record copy: at once for our
--- relay or an officer (not matched only by first name); anyone else at most
--- once per 5 minutes each (or one member sending everyone's records or a
--- digest with a future time could make every client re-send its record
--- every 20 seconds)
+-- ReassertMine because of `sender`'s catch-up answer or record copy: for our
+-- relay or an officer (not matched only by first name) at most once a minute
+-- each; anyone else at most once per 5 minutes each (or one member sending
+-- everyone's records or a digest with a future time could make every client
+-- re-send its record every 20 seconds)
 local function ReassertFor(sender, theirTs)
-  local trusted = not IsLoose(sender) and (ns.IsMyRelay(sender) or ns.Plans.IsOfficer(sender))
-  if not trusted then
-    local now = GetTime()
-    if reassertFrom[sender] and now - reassertFrom[sender] < 300 then return end
-    reassertFrom[sender] = now
-  end
+  local trusted = not IsLoose(sender) and (ns.IsMyRelay(sender, "D") or ns.Plans.IsOfficer(sender))
+  local now = GetTime()
+  if reassertFrom[sender] and now - reassertFrom[sender] < (trusted and 60 or 300) then return end
+  reassertFrom[sender] = now
   ReassertMine(theirTs)
 end
 
-local function HandleDigest(sender, payload)
-  local theirs = Enc.DecodeDigest(payload)
-  -- someone holds a newer "copy" of our record than ours: correct it
-  local me, mine = ns.MyKey(), ns.MyRecord()
-  if me and mine and (theirs[me] or 0) > (mine.ts or 0) and ns.TimeOK(theirs[me]) then
-    ReassertFor(sender, theirs[me])
+local summariesHeard = 0 -- summaries we stored (for /fhub bug)
+
+-- Our own record, as someone else sent it: a newer "copy", or one of our
+-- version that isn't exactly ours (its canonical text differs), gets
+-- corrected. Throttled per sender like a digest's (ReassertFor).
+local function OwnCopyCheck(sender, rec)
+  local mine = ns.MyRecord()
+  if not mine then return end
+  local ts = mine.ts or 0
+  if rec.ts > ts or (rec.ts == ts and Enc.EncodeRecord(rec) ~= Enc.Canon(Enc.EncodeRecord(mine))) then
+    ReassertFor(sender, rec.ts)
   end
-  if not AmRelayFor(sender) then return end
+end
+
+-- the longest record (canonical text) we take: one that still goes out as a
+-- single F (MAX_PARTS below), so every record we hold can be passed on
+local MAX_RECORD = MAX_RECORD_PARTS * CHUNK
+
+-- deltas (T): at most one tried per owner every DELTA_GAP seconds; after one
+-- failed, none until a whole record of theirs is stored (see HandleDelta)
+local DELTA_GAP = 5
+local lastDeltaAt = {}   -- [key] = GetTime() we last tried one of theirs
+local deltaBlocked = {}  -- [key] = true: one of theirs failed, waiting for their whole record
+
+local function TellArrived(key, held, sender)
+  local C = ns.Catchup
+  if C and C.Arrived then
+    local ok, err = pcall(C.Arrived, key, held, sender)
+    if not ok then ns.ReportError(err) end
+  end
+end
+
+-- hash `text` for intake (key: one job per character waiting, see H.Queue);
+-- with the queue full, once it has drained. Keys: "own:" .. character for
+-- the owner's own record or delta, "in:" .. character for a copy passed on
+-- by a relay or officer, "sh:" .. character for one heard from anyone else
+-- (C.Shared): a copy passed on never replaces the owner's own job, or the
+-- other way round.
+local function HashLater(text, fn, key)
+  if ns.Hash.Queue(text, fn, false, key) then return end
+  ns.Hash.WhenIdle(function() ns.Hash.Queue(text, fn) end)
+end
+
+-- Stores a record that passed its checks: h = its checksum when already
+-- worked out (else it's worked out after), firstHand = from its owner (then
+-- the checksum is the owner's announcement too, and it replaces our copy
+-- even when ours claims to be newer). A copy of the version we hold
+-- replaces ours only when it differs (ours was a wrong copy: the caller
+-- checked the new one). Tells Catchup.lua, when loaded, that it arrived.
+local function StoreChecked(rec, h, firstHand, sender, canon)
   local g = ns.GuildDB()
   if not g then return end
-  local sent = 0
-  for key, rec in pairs(g.members) do
-    -- skip the asker's own record and our own (we answer that via H/W)
-    if key ~= sender and key ~= ns.MyKey() and (theirs[key] or 0) < (rec.ts or 0) then
-      if ns.roster[key] or not next(ns.roster) then -- don't relay people who left the guild
-        ns.BroadcastRecord(rec)
-        sent = sent + 1
-      end
+  local key = rec.key
+  local have = g.members[key]
+  -- (something newer may have come while the checksum was worked out)
+  if have and (have.ts or 0) > rec.ts and not firstHand then return end
+  canon = canon or Enc.EncodeRecord(rec)
+  local stored, identical = false, false
+  if have and (have.ts or 0) == rec.ts then
+    local differs
+    if h and have.hash then differs = have.hash ~= h else differs = Enc.EncodeRecord(have) ~= canon end
+    if differs then stored = ns.StoreRecord(rec, { replace = true }) else identical = true end
+  elseif have and (have.ts or 0) > rec.ts then
+    stored = ns.StoreRecord(rec, { force = true })
+    ns.Debug(("%s's own record replaced a copy claiming to be newer"):format(key))
+  else
+    stored = ns.StoreRecord(rec)
+  end
+  if firstHand and (stored or identical) then deltaBlocked[key] = nil end
+  local held = g.members[key]
+  -- the record we now hold has this text: it gets the checksum
+  local target = (held == rec or identical) and held or nil
+  -- (no checksums at all when they can't be worked out here)
+  if ns.Hash.broken then target = nil end
+  if h then
+    if target then target.hash = h end
+    if firstHand then SetOwnerHash(key, rec.ts, h, true) end
+  elseif target or firstHand then
+    if target and identical and target.hash then
+      -- (the same text: the same checksum, nothing to work out)
+      if firstHand then SetOwnerHash(key, rec.ts, target.hash, true) end
+    elseif not ns.Hash.broken then
+      HashLater(canon, function(hh)
+        if target and g.members[key] == target then target.hash = hh end
+        if firstHand then SetOwnerHash(key, rec.ts, hh, true) end
+      end, (firstHand and "own:" or "in:") .. key)
     end
   end
-  ns.Debug(("relayed %d records to %s"):format(sent, sender))
+  if stored then ns.Debug("stored " .. key .. " (from " .. tostring(sender) .. ")") end
+  if held and held.ts == rec.ts then TellArrived(key, held, sender) end
 end
+ns.StoreChecked = StoreChecked
 
--- the same record apart from cooldowns and time played (clients pass records
--- on with only what they know: 0.21 no cooldowns, each version drops cooldowns
--- newer than it, and before 0.24 no time played)
-local function SameCore(a, b)
-  return Enc.EncodeRecord(a, true) == Enc.EncodeRecord(b, true)
-end
-
--- does `rec` hold time played that `mine` doesn't, or holds differently?
--- (`rec` lacking it doesn't count: see SameCore). Both sides are compared as
--- a receiver holds them (encoded, decoded, encoded again), so anything the
--- decoder drops from ours (e.g. an XP part outside its limits) can't make an
--- honest echo look different.
-local function PlayedWire(p)
-  local s = p and Enc.EncodePlayed(p)
-  local d = s and Enc.DecodePlayed(s)
-  return d and Enc.EncodePlayed(d)
-end
-local function PlayedDiffer(rec, mine)
-  if not rec.played then return false end
-  local m = PlayedWire(mine.played)
-  return not m or PlayedWire(rec.played) ~= m
-end
-
--- does `rec` hold time played `have` lacks?
-local function AddsPlayed(rec, have)
-  return rec.played ~= nil and not have.played
-end
-
--- does `rec` hold a cooldown `mine` doesn't, or holds differently? (cooldowns
--- `mine` has that `rec` lacks don't count: see SameCore)
-local function CdsDiffer(rec, mine)
-  for id, e in pairs(rec.cds or {}) do
-    local m = mine.cds and mine.cds[id]
-    if not m or Enc.ToB36(m.ready) ~= Enc.ToB36(e.ready) or Enc.ToB36(m.dur) ~= Enc.ToB36(e.dur) then return true end
+-- A copy passed on by someone else whose checksum isn't what the owner (or
+-- the catch-up's relays) said: refused. A summary of that version goes too
+-- (it came the same way). Catchup.lua, when loaded, deals with the relay;
+-- otherwise we ask the owner, if online, for the real one.
+local function BadCopy(sender, rec, exp)
+  local g = ns.GuildDB()
+  local key = rec.key
+  local part = g and g.partials[key]
+  if part and (part.ts or 0) == rec.ts then g.partials[key] = nil end
+  ns.Debug(("refused %s's record from %s: checksum doesn't match"):format(key, tostring(sender)))
+  local C = ns.Catchup
+  if C and C.BadCopy then
+    local ok, err = pcall(C.BadCopy, sender, key, rec.ts, exp)
+    if not ok then ns.ReportError(err) end
+  elseif ns.IsOnline(key) then
+    Want(key, rec.ts, exp)
   end
-  return false
 end
 
--- does `rec` hold a cooldown `have` lacks?
-local function AddsCds(rec, have)
-  for id in pairs(rec.cds or {}) do
-    if not (have.cds and have.cds[id]) then return true end
+-- a passed-on copy (record or summary) of `key` version `ts` from an
+-- officer: a version newer than the one its owner, online, told us they
+-- have is made up
+local function OfficerCopyOK(key, ts)
+  local ots = OwnerHash(key)
+  return not (ots and ts > ots and OwnerLive(key))
+end
+
+-- An officer may pass records on any time (checked against the owner's
+-- checksum, see HandleFull). Anyone else only for our records catch-up:
+-- CatchupAccepts gives the checksum Catchup.lua expects for that version
+-- from them (nil: not expected from them). CatchupShared: the same for a
+-- whole record from any guild member by their exact name (not one of our
+-- relays), checked against that checksum and dropped when it differs.
+local function IsOfficerSender(sender)
+  return not IsLoose(sender) and ns.Plans ~= nil and ns.Plans.IsOfficer(sender) == true
+end
+local function CatchupAccepts(sender, key, ts)
+  local C = ns.Catchup
+  if IsLoose(sender) or not (C and C.Accepts) then return nil end
+  return C.Accepts(sender, key, ts)
+end
+local function CatchupShared(sender, key, ts)
+  local C = ns.Catchup
+  if not receivingExact or IsLoose(sender) or ns.Hash.broken or not (C and C.Shared) then return nil end
+  return C.Shared(key, ts)
+end
+
+-- the owner's own record (from their exact name): the authority on it. It
+-- replaces our copy even when ours claims to be newer (that one is a
+-- forgery, or data from another computer of theirs).
+local function HandleOwnersRecord(sender, rec, canon)
+  local g = ns.GuildDB()
+  local have = g.members[rec.key]
+  if have and (have.ts or 0) == rec.ts and have.hash and not ns.Hash.broken and Enc.EncodeRecord(have) == canon then
+    -- the copy we hold, again: nothing to store or work out
+    SetOwnerHash(rec.key, rec.ts, have.hash, true)
+    deltaBlocked[rec.key] = nil
+    TellArrived(rec.key, have, sender)
+    return
   end
-  return false
+  StoreChecked(rec, nil, true, sender, canon)
 end
 
 -- Who may change a character record:
---   * the owner (sender == rec.key) may always send their own record;
+--   * the owner (sender == rec.key, by their exact name) may always send
+--     their own record;
 --   * a copy passed on by someone else is how records of members who are
---     offline reach people (catch-up answers to a digest). It's taken from an
---     officer, or from the member answering our catch-up while that's due
---     (ns.RelayGate, digest "D"): it may fill in a record we don't have,
---     replace an older copy (otherwise newer records of offline members would
---     never reach anyone holding an old one), or add cooldowns to the same
---     version of a record we hold without them;
+--     offline reach people. From a member, it's only taken while our records
+--     catch-up (Catchup.lua) expects exactly that version of that character,
+--     with the checksum it expects: from one of its relays (a wrong one gets
+--     the relay replaced), or heard from anyone else in the guild by their
+--     exact name (someone else's catch-up answer: a wrong one is dropped); from an
+--     officer any time, checked against the owner's checksum for that version
+--     when we know it, and never newer than the version the owner, online,
+--     told us they have. Such a copy may fill in a record we don't have,
+--     replace an older copy, or replace our copy of the same version when
+--     that copy is wrong (its checksum isn't the one expected);
 --   * anyone else's copies of other people's records are ignored, so a member
 --     can't rewrite (or invent) someone else's professions.
 -- A relay matched to the roster only by first name (see LooseSender) isn't trusted.
 local function HandleFull(sender, payload)
   local rec = Enc.DecodeRecord(payload)
   if not rec or not ns.TimeOK(rec.ts) then return end
-  if rec.key == ns.MyKey() then
-    local mine = ns.MyRecord()
-    -- a newer copy, or one with our timestamp but different contents, gets
-    -- corrected; a copy of ours someone passed on is left alone, also when it
-    -- lacks some of our cooldowns or our time played (an older client relaying
-    -- it without what it doesn't know). Throttled per sender like a digest's (ReassertFor).
-    if mine and (rec.ts > (mine.ts or 0)
-        or (rec.ts == (mine.ts or 0)
-          and (not SameCore(rec, mine) or CdsDiffer(rec, mine) or PlayedDiffer(rec, mine)))) then
-      ReassertFor(sender, rec.ts)
-    end
-    return
-  end
+  if rec.key == ns.MyKey() then return OwnCopyCheck(sender, rec) end
   -- only guild members (stops made-up members piling up in everyone's saved data)
   if next(ns.roster) and not ns.roster[rec.key] then return end
-  -- (a sender matched only by first name isn't taken as the owner: see
-  -- LooseSender; RelayGate refuses them as a relay too)
-  if sender ~= rec.key or IsLoose(sender) then
-    local g = ns.GuildDB()
-    local have = g and g.members[rec.key]
-    if have then
-      local ts = have.ts or 0
-      if ts > rec.ts then return end
-      -- the same version: only of use when it brings cooldowns or time played ours lacks
-      if ts == rec.ts and (not (AddsCds(rec, have) or AddsPlayed(rec, have)) or not SameCore(rec, have)) then return end
+  local g = ns.GuildDB()
+  if not g then return end
+  local key = rec.key
+  local canon = Enc.EncodeRecord(rec)
+  if #canon > MAX_RECORD then return end
+  -- (a sender matched only by first name isn't taken as the owner: see LooseSender)
+  if sender == key and receivingExact and not IsLoose(sender) then
+    return HandleOwnersRecord(sender, rec, canon)
+  end
+  local exp, shared
+  if IsOfficerSender(sender) then
+    if not OfficerCopyOK(key, rec.ts) then return end
+    exp = ExpectedHash(key, rec.ts, sender)
+  else
+    exp = CatchupAccepts(sender, key, rec.ts)
+    if exp then
+      -- (our relay answering: see AutoResync and ns.CatchUpActive)
+      relayAnsweredAt.D = GetTime()
+      RelayActive(sender)
+    else
+      exp = CatchupShared(sender, key, rec.ts)
+      if not exp then return end
+      -- (the first copy heard is checked; another, from anyone, while it's
+      -- waiting is ignored: it mustn't replace that job. Our relays' copies
+      -- have jobs of their own, "in:")
+      if ns.Hash.Waiting("sh:" .. key) then return end
+      shared = true
     end
-    if not ns.RelayGate(sender, "D", function() HandleFull(sender, payload) end) then return end
   end
-  if ns.StoreRecord(rec) then
-    ns.Debug("stored " .. rec.key .. " (from " .. sender .. ")")
+  local have = g.members[key]
+  if have then
+    local ts = have.ts or 0
+    if ts > rec.ts then return end
+    -- the same version: only of use when ours is known to be wrong
+    if ts == rec.ts and (not exp or have.hash == exp) then return end
   end
+  if ns.Hash.broken then exp = nil end
+  if not exp then return StoreChecked(rec, nil, false, sender, canon) end
+  -- (with too much waiting to be checked, refused: the catch-up asks again)
+  ns.Hash.Queue(canon, function(h)
+    if h ~= exp then
+      if shared then
+        return ns.Debug(("dropped %s's record from %s: checksum doesn't match"):format(key, tostring(sender)))
+      end
+      return BadCopy(sender, rec, exp)
+    end
+    StoreChecked(rec, h, false, sender, canon)
+  end, false, (shared and "sh:" or "in:") .. key)
 end
+
+-- T: an owner's change to their own record (see Enc.EncodeDelta). Only ever
+-- first-hand: from the owner's exact name, on our protocol. Applied to our
+-- copy when it's the version the change starts from; anything else (we
+-- missed one, our copy is wrong, the result's checksum isn't the one
+-- announced) makes us ask the owner for the whole record (W), and ignore
+-- their deltas until it's here.
+local function DeltaFailed(d, why)
+  deltaBlocked[d.key] = true
+  if why then ns.Debug("a change to " .. d.key .. " " .. why .. ": asking for the whole record") end
+  Want(d.key, d.newTs, d.newHash)
+end
+
+local function ApplyDelta(d, sender, retried)
+  local g = ns.GuildDB()
+  if not g then return end
+  local key = d.key
+  local have = g.members[key]
+  if not have or (have.ts or 0) ~= d.baseTs or (have.hash and have.hash ~= d.baseHash) then
+    if not have or (have.ts or 0) < d.newTs then DeltaFailed(d) end
+    return
+  end
+  if not have.hash then
+    -- our copy's checksum isn't worked out yet: once it is, try again (once)
+    if retried then return DeltaFailed(d) end
+    HashLater(Enc.EncodeRecord(have), function(h)
+      if g.members[key] == have then have.hash = h end
+      ApplyDelta(d, sender, true)
+    end)
+    return
+  end
+  local text = Enc.ApplyDelta(Enc.EncodeRecord(have), d.ops, d.newTs)
+  local rec = text and #text <= MAX_RECORD and Enc.DecodeRecord(text)
+  if not rec or rec.key ~= key or rec.ts ~= d.newTs then return DeltaFailed(d, "didn't apply") end
+  local canon = Enc.EncodeRecord(rec)
+  if #canon > MAX_RECORD then return DeltaFailed(d, "is too big") end
+  local job = ns.Hash.Queue(canon, function(h)
+    if h ~= d.newHash then return DeltaFailed(d, "gave the wrong checksum") end
+    StoreChecked(rec, h, true, sender, canon)
+  end, false, "own:" .. key)
+  -- (too much waiting to be checked: the whole record later instead)
+  if not job then Want(key, d.newTs, d.newHash) end
+end
+
+local function HandleDelta(sender, payload)
+  local d = Enc.DecodeDelta(payload)
+  if not d or d.key ~= sender or d.key == ns.MyKey() then return end
+  if not receivingExact or IsLoose(sender) or presentProto[sender] ~= ns.PROTOCOL then return end
+  if not ns.TimeOK(d.newTs) or d.newTs <= d.baseTs then return end
+  if next(ns.roster) and not ns.roster[d.key] then return end
+  SetOwnerHash(d.key, d.newTs, d.newHash)
+  -- (checksums can't be worked out here: their whole record instead)
+  if ns.Hash.broken then return Want(d.key, d.newTs, nil) end
+  local now = GetTime()
+  if deltaBlocked[d.key] or (lastDeltaAt[d.key] and now - lastDeltaAt[d.key] < DELTA_GAP) then
+    -- (one failed, or they come too fast: their whole record instead)
+    return Want(d.key, d.newTs, d.newHash)
+  end
+  lastDeltaAt[d.key] = now
+  ApplyDelta(d, sender, false)
+end
+
+-- E: a batch of summaries (0.25+). Always second-hand (relays send them, never
+-- owners), so each summary is taken like a relayed F: from an officer, or
+-- from one of our records catch-up's relays for a character and version it
+-- expects (never checked: the whole record is). Kept in g.partials until the
+-- whole record arrives (Core.lua ns.StoreSummaries).
+local function HandleSummary(sender, payload)
+  if not next(ns.roster) then return end
+  local list = Enc.DecodeSummaryBatch(payload)
+  if not list then return end
+  local me = ns.MyKey()
+  local officer = IsOfficerSender(sender)
+  local useful = {}
+  for _, rec in ipairs(list) do
+    if rec.ts > 0 and ns.TimeOK(rec.ts) then
+      if rec.key == me then
+        -- a newer "copy" of ours gets corrected, as for F; one of our version
+        -- is left alone (a summary leaves out too much to compare)
+        local mine = ns.MyRecord()
+        if mine and rec.ts > (mine.ts or 0) then ReassertFor(sender, rec.ts) end
+      elseif ns.SummaryUseful(rec) then
+        local ok
+        if officer then ok = OfficerCopyOK(rec.key, rec.ts)
+        else ok = CatchupAccepts(sender, rec.key, rec.ts) ~= nil end
+        if ok then useful[#useful + 1] = rec end
+      end
+    end
+  end
+  if #useful == 0 then return end
+  if not officer then
+    relayAnsweredAt.D = GetTime()
+    RelayActive(sender)
+    local C = ns.Catchup
+    if C and C.Progress then C.Progress(sender) end
+  end
+  local n = ns.StoreSummaries(useful)
+  summariesHeard = summariesHeard + n
+  ns.Debug(("stored %d summaries (from %s)"):format(n, sender))
+end
+function ns.SummariesHeard() return summariesHeard end
 
 -- Size limits: most messages fit in a few parts; only these can be big.
 -- Anything longer is dropped, so nobody can make everyone buffer ~100 KB.
-local MAX_PARTS = { F = 120, B = 400, D = 200, Y = 120, A = 30, P = 30, Q = 40, d = 40, t = 30, l = 30, I = 12, G = 12, K = 12 }
+local MAX_PARTS = { F = MAX_RECORD_PARTS, E = 16, T = 8, D = 2, s = 80, x = 40, y = 1,
+                    B = 400, Y = 120, A = 30, P = 30, Q = 40, d = 40, t = 30, l = 30, I = 12, G = 12, K = 12 }
 local DEFAULT_PARTS = 8
 local MAX_BUFFERS = 16 -- half-received messages per sender
+local BUFFER_MAX = 900 -- a half-received message is dropped this long after its first part (or its restart)
 
 -- Catch-up requests make the answering member re-send a lot: answer each
 -- member's request of a kind at most once per DIGEST_GAP seconds, so a
 -- spammed /fhub sync (or a modified client) can't flood the guild channel.
--- (DIGESTS is at the top of the file; the answer budget is above HandleHello.)
+-- (DIGESTS is at the top of the file; the answer budget is above HandleHello.
+-- Records catch-up, D, keeps its own limits: see Catchup.lua.)
 local DIGEST_GAP = 20
 local lastDigest = {}
 
@@ -1067,6 +1671,7 @@ local lastDigest = {}
 -- answers wait their turn instead of piling on more: at launch everyone's data
 -- starts empty, and the answers to one login usually cover the next one too.
 -- The same when the answer budget (MAX_ANSWERS) is used up.
+-- (Records catch-up does the same for its x answers, see Catchup.lua.)
 local BUSY_QUEUE = 200
 local MAX_WAITS = 10 -- 30 s apart: after 5 minutes, answer anyway
 
@@ -1089,18 +1694,31 @@ local function RequesterWindowOpen(asker, askedAt)
   return now - heard <= CATCHUP_WINDOW - CLOSE_MARGIN
 end
 
+-- One held-up answer per member and kind at a time: a repeat request (their
+-- /fhub sync) while one waits is ignored (see Dispatch), so it can't start a
+-- second answer re-sending everything.
+local answerPending = {}  -- [requester#type] = GetTime() their held-up answer started waiting
+
 local Dispatch
 local function AnswerCatchUp(sender, msgType, payload, waits, channel, loose, askedAt)
+  local k = sender .. "#" .. msgType
   if waits > 0 and not RequesterWindowOpen(sender, askedAt) then
     ns.Debug(("dropped catch-up answer %s for %s (their window closed)"):format(msgType, sender))
+    answerPending[k] = nil
     return
   end
   if (#sendQueue > BUSY_QUEUE or OverBudget(sender)) and waits < MAX_WAITS then
+    answerPending[k] = answerPending[k] or GetTime()
     C_Timer.After(30, function()
-      if ns.IsOnline(sender) then AnswerCatchUp(sender, msgType, payload, waits + 1, channel, loose, askedAt) end
+      if ns.IsOnline(sender) then
+        AnswerCatchUp(sender, msgType, payload, waits + 1, channel, loose, askedAt)
+      else
+        answerPending[k] = nil
+      end
     end)
     return
   end
+  answerPending[k] = nil
   local before = queuedCount
   Dispatch(sender, msgType, payload, true, channel, loose)
   if queuedCount > before then
@@ -1109,34 +1727,27 @@ local function AnswerCatchUp(sender, msgType, payload, waits, channel, loose, as
   end
 end
 
+-- the records catch-up messages, handled by Catchup.lua
+local CATCHUP_TYPES = { D = "OnD", s = "OnS", x = "OnX", y = "OnY" }
+local function HandleCatchup(sender, msgType, payload, channel)
+  local C = ns.Catchup
+  local fn = C and C[CATCHUP_TYPES[msgType]]
+  if fn then fn(sender, payload, channel) end
+end
+
 -- channel: "GUILD" or "WHISPER", passed to CommHandlers as a third argument.
 -- loose: this message's sender matched the roster only by first name (see
 -- ResolveSender); handlers see it as ns.receivingLoose.
 function Dispatch(sender, msgType, payload, answering, channel, loose)
-  if DIGESTS[msgType] and not answering then
+  if DIGESTS[msgType] and msgType ~= "D" and not answering then
     local k = sender .. "#" .. msgType
     local now = GetTime()
-    if (lastDigest[k] and now - lastDigest[k] < DIGEST_GAP) or (answeredAt[k] and now - answeredAt[k] < ANSWER_GAP) then
+    if (lastDigest[k] and now - lastDigest[k] < DIGEST_GAP) or (answeredAt[k] and now - answeredAt[k] < ANSWER_GAP)
+      or answerPending[k] then
       ns.Debug("ignored repeated catch-up request " .. msgType .. " from " .. sender)
       return
     end
     lastDigest[k] = now
-    -- we owe them a reply to their hello: send it first, so it reaches them
-    -- before our answers (they only take catch-up answers from the member
-    -- they know answers them, see RelayGate), ahead of whatever is waiting.
-    -- Only when we answer them as their relay (officers' answers are taken
-    -- without it, see RelayGate / OfficerSent), and ahead of the queue at most
-    -- once per FRONT_GAP seconds each: otherwise alternating hellos and
-    -- digests would get round the hello quota and keep the relay sending
-    -- replies first. Past that, the reply HandleHello scheduled within its
-    -- quota (if any) is all they get.
-    if replyDue[sender] and AmRelayFor(sender) then
-      if now - (frontedAt[sender] or -1e9) >= FRONT_GAP then
-        frontedAt[sender] = now
-        SendReply(replyDue[sender], true)
-      end
-      replyDue[sender] = nil
-    end
     return AnswerCatchUp(sender, msgType, payload, 0, channel, loose, now)
   end
   -- which message is being handled and who sent it (the roster key): the
@@ -1145,7 +1756,8 @@ function Dispatch(sender, msgType, payload, answering, channel, loose)
   -- sender only matched by first name. (ns.receiving only for feature
   -- messages: the change log has nothing to note for core ones.)
   local feature = ns.CommHandlers[msgType]
-  local core = msgType == "H" or msgType == "R" or msgType == "W" or msgType == "D" or msgType == "F"
+  local core = msgType == "H" or msgType == "R" or msgType == "W" or msgType == "F" or msgType == "E"
+    or msgType == "T" or CATCHUP_TYPES[msgType] ~= nil
   if not core and not feature then return end
   local r1, r2, r3, r4 = ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose
   if core then
@@ -1158,8 +1770,10 @@ function Dispatch(sender, msgType, payload, answering, channel, loose)
   if msgType == "H" then ok, err = pcall(HandleHello, sender, payload, false)
   elseif msgType == "R" then ok, err = pcall(HandleHello, sender, payload, true)
   elseif msgType == "W" then ok, err = pcall(HandleWant, sender, payload)
-  elseif msgType == "D" then ok, err = pcall(HandleDigest, sender, payload)
   elseif msgType == "F" then ok, err = pcall(HandleFull, sender, payload)
+  elseif msgType == "E" then ok, err = pcall(HandleSummary, sender, payload)
+  elseif msgType == "T" then ok, err = pcall(HandleDelta, sender, payload)
+  elseif CATCHUP_TYPES[msgType] then ok, err = pcall(HandleCatchup, sender, msgType, payload, channel)
   else ok, err = pcall(feature, sender, payload, channel) end
   ns.receiving, ns.receivingPayload, ns.receivingSender, ns.receivingLoose = r1, r2, r3, r4
   if not ok then error(err, 0) end
@@ -1167,8 +1781,7 @@ end
 
 function ns.OnAddonMessage(prefix, text, channel, sender)
   if channel ~= "GUILD" and channel ~= "WHISPER" then return end
-  local legacy = PREFIX ~= LEGACY_PREFIX and prefix == LEGACY_PREFIX
-  if prefix ~= PREFIX and not legacy then return end
+  if prefix ~= PREFIX then return end
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then return end
   if ns.Diag then ns.Diag.NoteRecv(sender, channel, prefix) end
   local raw = sender
@@ -1180,20 +1793,6 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   -- (GUILD messages can only come from the guild.)
   local who, loose = ns.ResolveSender(raw, channel == "WHISPER")
   if ns.Diag then ns.Diag.NoteSender(sender, who) end
-  if legacy then
-    -- older clients on the old channel: only note their version, use nothing else
-    local t, payload = text:match("^([HR])#%w+#1#1#(.*)$")
-    if t and channel == "GUILD" then
-      local f = Enc.Split((payload:gsub("|", "")), "^")
-      local ver = f[2]
-      -- only the name the game gave us counts, never the key they claim (f[4])
-      local key = who
-      if key and key ~= ns.MyKey() and ver and #ver <= 16 and ver:match("^%d+%.%d+%.?%d*$") then
-        ns.present[key] = ns.present[key] or ver
-      end
-    end
-    return
-  end
   if channel == "WHISPER" and not who then return end
   sender = who or sender
   receivingExact = who ~= nil and resolvedHow[raw] == "exact"
@@ -1220,8 +1819,11 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   -- Also before their hello reached us (nil: can't tell yet), as RelayGate's
   -- deferred path does: dropped by FlushReplays if they turn out not to be.
   -- (AutoResync only counts answers RelayGate accepted, not this)
-  if not loose and GetTime() - lastDigestAt <= CATCHUP_MAX and ns.IsMyRelay(sender) ~= false then
+  if not loose then
     RelayActive(sender)
+    -- (a long s answer still coming in, see Catchup.lua SWaitCheck)
+    local C = ns.Catchup
+    if C and C.Heard then C.Heard(sender, msgType, channel) end
   end
   part, total = tonumber(part), tonumber(total)
   if total == 1 then return Dispatch(sender, msgType, payload, nil, channel, loose) end
@@ -1235,11 +1837,22 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
     local open = 0
     for k in pairs(buffers) do if k:sub(1, #sender + 1) == sender .. "#" then open = open + 1 end end
     if open >= MAX_BUFFERS then return end
-    buf = { total = total, parts = {}, got = 0, t = GetTime(), msgType = msgType }
+    buf = { total = total, parts = {}, got = 0, t = GetTime(), first = GetTime(), msgType = msgType, restarts = 0 }
     buffers[bkey] = buf
   end
   -- every part must agree on the total, or the message could complete with a gap
   if total ~= buf.total then return end
+  -- (dropped a minute after its latest part: a long message takes longer
+  -- than that to arrive at about one part a second. Parts we already have
+  -- count too: a message held up mid-way goes again from its first part,
+  -- see Restart)
+  buf.t = GetTime()
+  -- (its first part again: the message started over, and gets BUFFER_MAX
+  -- from now, twice at most)
+  if part == 1 and buf.parts[1] and buf.restarts < 2 then
+    buf.restarts = buf.restarts + 1
+    buf.first = buf.t
+  end
   if not buf.parts[part] then
     buf.parts[part] = payload
     buf.got = buf.got + 1
@@ -1253,9 +1866,16 @@ end
 ------------------------------------------------------------------------
 -- Startup
 ------------------------------------------------------------------------
--- one second apart so they don't all land at once
+-- one second apart so they don't all land at once; the records catch-up
+-- (Catchup.lua) a few seconds after our hello, once the replies to it came
 local function SendAllDigests()
-  C_Timer.After(3, SendDigest)
+  local C = ns.Catchup
+  if C and C.Start then
+    C_Timer.After(C.START_DELAY or 8, function()
+      local ok, err = pcall(C.Start)
+      if not ok then ns.ReportError(err) end
+    end)
+  end
   for i, fn in ipairs(digests) do
     C_Timer.After(3 + i, function()
       local ok, err = pcall(fn)
@@ -1283,7 +1903,7 @@ local function AutoResync()
     if age >= CATCHUP_MAX - 90 and age < CATCHUP_MAX - 30
         and now - (relayAnsweredAt[d] or -1e9) <= CATCHUP_WINDOW then
       for sender, u in pairs(relayUntil) do
-        if (u[d] or 0) >= now and ns.IsMyRelay(sender) then
+        if (u[d] or 0) >= now and ns.IsMyRelay(sender, d) then
           autoResynced = true
           ns.Debug("catch-up still running near its time limit: asking again")
           SendAllDigests()
@@ -1294,14 +1914,19 @@ local function AutoResync()
   end
 end
 
+-- The hello carries our record's checksum, so it waits for that (a frame or
+-- two). The version in it is what the guild holds of ours from then on
+-- (own.base): members holding an older one ask for it (W).
 local function Start()
   if started then return end
   started = true
   ns.ScanAll()
   ns.MirrorMyRecord()
-  ns.Send("H", HelloPayload())
-  LegacyHello()
-  SendAllDigests()
+  OwnRefresh(function(cur)
+    own.base = cur
+    QueueHello("H")
+    SendAllDigests()
+  end)
 end
 
 function ns.CheckGuildEcho()
@@ -1312,9 +1937,9 @@ function ns.CheckGuildEcho()
   -- what we sent so far reached nobody: forget which records we already asked
   -- for (those asks were lost), say hello again and resend our data
   for k in pairs(wantedRecently) do wantedRecently[k] = nil end
-  ns.Send("H", HelloPayload())
+  QueueHello("H")
   C_Timer.After(10, function()
-    ns.BroadcastRecord(ns.MyRecord())
+    SendOwn(true)
     SendAllDigests()
   end)
 end
@@ -1328,23 +1953,26 @@ function ns.ForceSync()
   if not IsInGuild() then return ns.Print("You're not in a guild.") end
   if not started then Start() return end
   autoResynced = false
-  ns.Send("H", HelloPayload())
-  LegacyHello()
-  ns.BroadcastRecord(ns.MyRecord())
-  SendAllDigests()
+  ns.MirrorMyRecord()
+  OwnRefresh(function()
+    QueueHello("H")
+    SendOwn(true)
+    SendAllDigests()
+  end)
   ns.Print("Sync requested.")
 end
 
 function ns.PrintStatus()
   local g = ns.GuildDB()
-  local stored, users, online = 0, 0, 0
+  local stored, partial, users, online = 0, 0, 0, 0
   if g then
     for _ in pairs(g.members) do stored = stored + 1 end
+    for _ in pairs(g.partials or {}) do partial = partial + 1 end
     for _ in pairs(g.addonUsers) do users = users + 1 end
   end
   for key in pairs(ns.present) do if ns.IsOnline(key) then online = online + 1 end end
-  ns.Print(("v%s | guild: %s | records: %d | FableHub users seen: %d (%d online now) | queued msgs: %d")
-    :format(ns.VERSION, ns.GuildKey() or "none", stored, users, online, #sendQueue))
+  ns.Print(("v%s | guild: %s | records: %d | partial: %d | FableHub users seen: %d (%d online now) | queued msgs: %d")
+    :format(ns.VERSION, ns.GuildKey() or "none", stored, partial, users, online, #sendQueue))
   local rec = ns.MyRecord()
   for _, p in pairs(rec and rec.profs or {}) do
     local n = ns.CountRecipes and ns.CountRecipes(p) or 0
@@ -1368,22 +1996,32 @@ end
 
 ns.On("LOGIN", function()
   C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
-  if PREFIX ~= LEGACY_PREFIX then C_ChatInfo.RegisterAddonMessagePrefix(LEGACY_PREFIX) end
   C_Timer.NewTicker(0.25, Pump)
-  -- drop half-received messages after a minute
+  -- drop half-received messages a minute after their latest part, and
+  -- BUFFER_MAX after their first (a sender can't keep one open for ever)
   C_Timer.NewTicker(30, function()
     local now = GetTime()
-    for k, buf in pairs(buffers) do if now - buf.t > 60 then buffers[k] = nil end end
+    for k, buf in pairs(buffers) do
+      if now - buf.t > 60 or now - buf.first > BUFFER_MAX then buffers[k] = nil end
+    end
     for k, t in pairs(lastDigest) do if now - t > DIGEST_GAP then lastDigest[k] = nil end end
     for k, t in pairs(answeredAt) do if now - t > ANSWER_GAP then answeredAt[k] = nil end end
     for k, t in pairs(wantFrom) do if now - t > ANSWER_GAP then wantFrom[k] = nil end end
     for k, t in pairs(reassertFrom) do if now - t > 300 then reassertFrom[k] = nil end end
     for k, t in pairs(answerCounted) do if now - t > 120 then answerCounted[k] = nil end end
-    for k, t in pairs(replyDue) do if now - t > 60 then replyDue[k] = nil end end
-    for k, t in pairs(frontedAt) do if now - t > FRONT_GAP then frontedAt[k] = nil end end
     for k, t in pairs(lastSendTo) do if now - t > CATCHUP_MAX then lastSendTo[k] = nil end end
+    for k, t in pairs(answerPending) do if now - t > CATCHUP_MAX then answerPending[k] = nil end end
     AutoResync()
     ExpireReplays()
+  end)
+  -- catch-up starting or ending (the sidebar and the Recipes page show its progress)
+  local syncActive = false
+  C_Timer.NewTicker(2, function()
+    local active = ns.CatchUpActive()
+    if active ~= syncActive then
+      syncActive = active
+      ns.Fire("SYNC_STATE", active)
+    end
   end)
   TryStart()
 end)
@@ -1393,3 +2031,29 @@ ns.RegisterEvent("PLAYER_GUILD_UPDATE", function()
 end)
 
 ns.RegisterEvent("CHAT_MSG_ADDON", ns.OnAddonMessage)
+
+-- What Catchup.lua (the records catch-up, loaded next) shares with this file
+ns.CommInternal = {
+  Paused = Paused,
+  AfterParts = AfterParts,
+  SUMMARY_BATCH = 12 * CHUNK,
+  CHUNK = CHUNK,
+  BUSY_QUEUE = BUSY_QUEUE,
+  MAX_WAITS = MAX_WAITS,
+  CATCHUP_MAX = CATCHUP_MAX,
+  ANSWER_GAP = ANSWER_GAP,
+  TrustedVersion = TrustedVersion,
+  IsLoose = IsLoose,
+  ReassertFor = ReassertFor,
+  Want = Want,
+  OwnerLive = OwnerLive,
+  BestRelay = BestRelay,
+  Waiting = Waiting,
+  Started = Started,
+  Cancel = Cancel,
+  OverBudget = OverBudget,
+  CountAnswer = CountAnswer,
+  RequesterWindowOpen = RequesterWindowOpen,
+  ReceivingExact = function() return receivingExact end,
+  RelayAnsweredAt = function(d) return relayAnsweredAt[d or "D"] end,
+}

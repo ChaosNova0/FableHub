@@ -351,8 +351,7 @@ end
 ------------------------------------------------------------------------
 -- class, role, spec, buff set (and whether buffs were detected or assumed)
 function P.Describe(plan, key)
-  local g = ns.GuildDB()
-  local rec = g and g.members[key]
+  local rec = ns.MemberRecord(key)
   if key == ns.MyKey() then rec = ns.MyRecord() end
   local r = ns.roster[key]
   local classFile = (rec and rec.class) or (r and r.class) or (plan and plan.extras and plan.extras[key])

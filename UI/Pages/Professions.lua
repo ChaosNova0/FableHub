@@ -74,9 +74,14 @@ function ns.Crafting()
           profs[skillLine] = agg
         end
         local recipeCount = ns.CountRecipes(p)
+        -- catch-up still running (only the summary is here, see ns.MemberRecord):
+        -- syncing = none of this profession's recipes yet, stale = showing the
+        -- ones of their older record we held
         table.insert(agg.crafters, {
           key = m.key, class = rec.class or (m.roster and m.roster.class), online = online, rec = rec,
           rank = p.rank or 0, max = p.max or 0, recipeCount = recipeCount, ts = p.scanned or rec.ts,
+          syncing = (rec.partial and (not rec.staleRecipes or recipeCount == 0)) and true or nil,
+          stale = (rec.staleRecipes and recipeCount > 0) and true or nil,
         })
         for id in pairs(p.recipes or {}) do
           local r = agg.recipes[id]
@@ -520,7 +525,9 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     local c = item.crafter
     tt:AddLine(ns.Icons.Class(c.class, 16) .. " " .. ns.ShortName(c.key), ns.ClassColor(c.class))
     tt:AddLine(("%s %s  %d/%d"):format(ns.Icons.Prof(item.skillLine, 14), item.profName, c.rank, c.max), 1, 1, 1)
-    if c.recipeCount == 0 then
+    if c.syncing then
+      tt:AddLine("Recipes are still arriving.", 0.7, 0.7, 0.7, true)
+    elseif c.recipeCount == 0 then
       tt:AddLine("Hasn't opened this profession since installing FableHub, so recipes aren't listed yet.", 0.7, 0.7, 0.7, true)
     end
     for _, cd in ipairs(ns.COOLDOWNS) do
@@ -587,7 +594,8 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
         for _, c in ipairs(agg.crafters) do
           local ch = chars[c.key]
           if not ch then
-            ch = { key = c.key, class = c.class, online = c.online, rec = c.rec, profs = {}, recipes = {} }
+            ch = { key = c.key, class = c.class, online = c.online, rec = c.rec, profs = {}, recipes = {},
+                   syncing = c.rec.partial and true or nil, stale = c.rec.staleRecipes and true or nil }
             chars[c.key] = ch
             order[#order + 1] = ch
           end
@@ -634,7 +642,8 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
         end
         local countText
         if filtering then countText = UI.Dim(#ch.recipes .. (#ch.recipes == 1 and " match" or " matches"), 0.6)
-        elseif canOpen then countText = UI.Dim(total .. " recipes", 0.6)
+        elseif canOpen then countText = UI.Dim(total .. (ch.stale and " recipes (updating)" or " recipes"), 0.6)
+        elseif ch.syncing then countText = UI.Dim("recipes syncing...", 0.35)
         else countText = UI.Dim("recipes not shared yet", 0.35) end
         items[#items + 1] = {
           header = true, char = ch,
@@ -643,7 +652,8 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
             tt:AddLine(ns.Icons.Class(it.char.class, 16) .. " " .. ns.ShortName(it.char.key), ns.ClassColor(it.char.class))
             for _, p in ipairs(it.char.profs) do
               tt:AddDoubleLine(ns.Icons.Prof(p.skillLine, 14) .. " " .. p.name .. "  " .. p.rank .. "/" .. p.max,
-                p.count > 0 and (p.count .. " recipes") or "|cff999999not shared yet|r", 1, 1, 1, 0.7, 0.7, 0.7)
+                p.count > 0 and (p.count .. " recipes") or (it.char.syncing and "|cff999999syncing...|r" or "|cff999999not shared yet|r"),
+                1, 1, 1, 0.7, 0.7, 0.7)
             end
             local cds = CD.Of(it.char.rec)
             if #cds > 0 then
@@ -706,6 +716,13 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     end
     local text = ("%d characters  ·  %d recipes"):format(shownChars, recipeCount)
     if readyN > 0 then text = text .. ("  ·  %d cooldown%s ready"):format(readyN, readyN == 1 and "" or "s") end
+    -- a catch-up that hasn't brought every recipe list yet
+    local sync = ns.SyncProgress()
+    if sync.partial > 0 and sync.active then
+      text = ("Recipes still syncing: %d of %d characters  ·  "):format(sync.partial, sync.total) .. text
+    elseif sync.partial > 0 then
+      text = ("Recipes not received yet for %d character%s (/fhub sync)  ·  "):format(sync.partial, sync.partial == 1 and "" or "s") .. text
+    end
     info:SetText(text)
     local empty
     if recipeCount == 0 and #order == 0 then
@@ -831,7 +848,7 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
                 UI.NameCell(c.key, c.class, c.online),
                 ns.Icons.Prof(skillLine, 13) .. " " .. UI.Dim(agg.name, 0.6),
                 UI.Colorize(tostring(c.rank), 1, 1, 1) .. UI.Dim(" / " .. c.max, 0.4),
-                c.recipeCount > 0 and tostring(c.recipeCount) or UI.Dim("?", 0.4),
+                c.recipeCount > 0 and tostring(c.recipeCount) or UI.Dim(c.syncing and "..." or "?", 0.4),
                 cdText,
                 UI.Dim(UI.TimeAgo(c.ts), 0.5),
               },

@@ -2,13 +2,14 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.24.0"
-ns.PROTOCOL = 1
--- Data era. Bump this (1 -> 2) in the build released for the live launch:
--- everyone's saved guild data from the beta is cleared once, and FableHub moves
--- to a new message channel so clients still on older versions can't send
--- beta data into the new guild. Settings are kept.
-ns.DATA_EPOCH = 2 -- 1 = Forever beta, 2 = launch (Nov 4, 2026)
+ns.VERSION = "0.26.0"
+-- The sync format. Clients only take records, hashes and deltas from members
+-- on the same protocol; any future change to the wire format bumps it.
+ns.PROTOCOL = 2
+-- Data era. Bumping it clears everyone's saved guild data once, and FableHub
+-- moves to a new message channel ("FableHub" .. era), so clients still on
+-- older versions can't send old data into the new one. Settings are kept.
+ns.DATA_EPOCH = 3 -- 1 = Forever beta, 2 = launch (Nov 4, 2026), 3 = launch, 0.26 sync
 -- Test suite only: the real client always defines WOW_PROJECT_ID, so in game
 -- nothing can change the data era from outside FableHub
 if FABLEHUB_TEST_EPOCH and not WOW_PROJECT_ID then ns.DATA_EPOCH = FABLEHUB_TEST_EPOCH end
@@ -149,7 +150,10 @@ function ns.SetMyKey(newKey)
     rec.ts = math.max(ns.Now(), (rec.ts or 0) + 1) -- never backwards
   end
   for _, g in pairs(FableHubDB.guilds) do
-    if oldKey then g.members[oldKey] = nil; g.addonUsers[oldKey] = nil end
+    if oldKey then
+      g.members[oldKey] = nil; g.addonUsers[oldKey] = nil
+      if g.partials then g.partials[oldKey] = nil end
+    end
   end
   ns.MirrorMyRecord()
   ns.Debug("your key is now " .. newKey .. (oldKey and (" (was " .. oldKey .. ")") or ""))
@@ -201,6 +205,17 @@ end
 -- Saved data
 --   FableHubDB.guilds[guildKey].members[charKey] = record
 --   record = { key, ts, class, level, profs = { [skillLine] = { name, rank, max, recipes = {[id]=true} } } }
+--   FableHubDB.guilds[guildKey].partials[charKey] = a newer record of which
+--     only the summary has arrived so far (everything but the recipes; see
+--     ns.StoreSummaries). Kept apart from members, so the sync code (relaying,
+--     owner checks, Activity) only ever sees whole records.
+--   record.hash = checksum of the record's canonical encoding (Hash.lua
+--     ns.HashOf), only ever worked out on this computer, never taken from a
+--     message. Partials never carry one.
+--   FableHubDB.guilds[guildKey].owner[charKey] = "<ts36>:<hash>": the version
+--     and checksum the character's owner last announced first-hand (hello,
+--     record or delta; see Comm.lua SetOwnerHash). Copies passed on by others
+--     must match it.
 ------------------------------------------------------------------------
 local DB_VERSION = 1
 
@@ -235,14 +250,56 @@ function ns.GuildKey()
   return guildName .. "|" .. (guildRealm or ns.MyRealm()) .. "|" .. faction
 end
 
+local CheckPartials -- (below, with the summaries)
+local partialsChecked = {} -- [guild table] = true once checked this session
+
+-- Saved records without a checksum (saved before the hash job finished, or
+-- stored by code that doesn't hash): worked out in the background, once a
+-- session. Our own characters' records are skipped (they change in place;
+-- Comm.lua keeps our own checksum apart).
+local function RehashMembers(g)
+  local H, Enc = ns.Hash, ns.Encode
+  if not H or H.broken then return end
+  local chars = FableHubDB and FableHubDB.chars or {}
+  for key, rec in pairs(g.members) do
+    -- (a checksum that isn't one, e.g. saved data edited by hand: worked out again)
+    if rec.hash ~= nil and not Enc.ValidH16(rec.hash) then rec.hash = nil end
+    if not rec.hash and chars[key] ~= rec then
+      H.Queue(ns.Encode.EncodeRecord(rec), function(h)
+        -- (only if that record is still the one we hold)
+        if g.members[key] == rec then rec.hash = h end
+      end)
+    end
+  end
+end
+
+-- Owners' checksums from saved data that aren't "<ts36>:<16 hex>" are dropped
+-- (the next hello, record or delta from the owner sets them again)
+local function CheckOwners(g)
+  local Enc = ns.Encode
+  for key, v in pairs(g.owner) do
+    local ts36, h
+    if type(v) == "string" then ts36, h = v:match("^(%w+):(%w+)$") end
+    if not ts36 or not Enc.Num(ts36, 4294967296) or not Enc.ValidH16(h) then g.owner[key] = nil end
+  end
+end
+
 -- Returns the saved table for the current guild, or nil when not in a guild yet.
 function ns.GuildDB()
   local gk = ns.GuildKey()
   if not gk then return nil end
   local g = FableHubDB.guilds[gk]
   if not g then
-    g = { members = {}, addonUsers = {} }
+    g = { members = {}, addonUsers = {}, partials = {}, owner = {} }
     FableHubDB.guilds[gk] = g
+  end
+  g.partials = g.partials or {} -- (saved before 0.25)
+  g.owner = g.owner or {}
+  if not partialsChecked[g] then
+    partialsChecked[g] = true
+    CheckPartials(g)
+    CheckOwners(g)
+    RehashMembers(g)
   end
   g.lastSeen = time()
   return g
@@ -259,46 +316,158 @@ function ns.MyRecord()
   return rec
 end
 
--- Store a record received from someone else. Returns true if it was newer
--- (or brought cooldowns or time played our copy of that version lacked).
-function ns.StoreRecord(rec)
+-- A partial record shows the recipes of the whole record `full` we hold
+-- (older) until its own arrive: staleRecipes. The tables are shared, not
+-- copied (SavedVariables may write them twice; harmless).
+local function CarryRecipes(part, full)
+  for skillLine, p in pairs(part.profs or {}) do
+    local fp = full.profs and full.profs[skillLine]
+    p.recipes = (fp and fp.recipes) or {}
+  end
+  part.outputs = full.outputs
+  part.staleRecipes = true
+end
+
+-- Store a record received from someone else. Returns true if it was stored.
+-- A copy of the version we already hold only replaces ours with
+-- opts.replace (Comm.lua decides that from the owner's checksum: ours was a
+-- wrong copy); an older one only with opts.force (the owner's own record,
+-- which is the authority even when ours claims to be newer: see Comm.lua). Every client holds a version exactly
+-- as its owner encoded it (see Encode.lua: canonical encoding), so there's
+-- nothing to merge between copies.
+function ns.StoreRecord(rec, opts)
   local g = ns.GuildDB()
   if not g or not rec or not rec.key then return false end
   local old = g.members[rec.key]
-  if old and (old.ts or 0) == (rec.ts or 0) then
-    -- the same version: clients pass records on with only the cooldowns they
-    -- know (0.21: none; later versions add more), so a copy only fills in
-    -- cooldowns ours lacks and never wipes or changes the ones we have
-    local added = false
-    for id, e in pairs(rec.cds or {}) do
-      if not (old.cds and old.cds[id]) then
-        old.cds = old.cds or {}
-        old.cds[id] = e
-        added = true
-      end
-    end
-    if added then old.cdChecked = math.max(old.cdChecked or 0, rec.cdChecked or 0) end
-    -- time played (0.24+): the same, filled in only when ours has none (a
-    -- copy passed on by an older client has it stripped; see Played.lua)
-    if rec.played and not old.played then
-      old.played = rec.played
-      added = true
-    end
-    if added then ns.Fire("DATA_CHANGED") end
-    return added
-  end
-  if old and (old.ts or 0) > (rec.ts or 0) then return false end
+  local same = old and (old.ts or 0) == (rec.ts or 0)
+  local older = old and (old.ts or 0) > (rec.ts or 0)
+  if same and not (opts and opts.replace) then return false end
+  if older and not (opts and opts.force) then return false end
   g.members[rec.key] = rec
-  if old and ns.Activity then pcall(ns.Activity.Compare, rec.key, old, rec, rec.ts) end
+  -- (Activity compares whole records only: never against a summary, nor a
+  -- corrected copy of the same version, nor a copy that claimed to be newer)
+  if old and not same and not older and ns.Activity then pcall(ns.Activity.Compare, rec.key, old, rec, rec.ts) end
+  -- (the owner's record replacing one that claimed to be newer: summaries
+  -- that came with that one go too)
+  if older and g.partials then g.partials[rec.key] = nil end
+  -- a summary waiting for this record is done; one of a still newer version
+  -- shows this record's recipes until its own arrive
+  local part = g.partials and g.partials[rec.key]
+  if part then
+    if (part.ts or 0) <= (rec.ts or 0) then g.partials[rec.key] = nil
+    else CarryRecipes(part, rec) end
+  end
   ns.Fire("DATA_CHANGED")
   return true
+end
+
+------------------------------------------------------------------------
+-- Summaries (0.25+): at catch-up a relay sends the light part of each record
+-- first (everything but the recipes and crafted items; see Comm.lua "E"), so
+-- the roster, classes, levels, cooldowns and time played fill in long before
+-- every recipe list has arrived. Until the whole record comes, a summary is
+-- kept in g.partials, never in g.members:
+--   g.partials[key] = the summary record, partial = true, and when we hold an
+--     older whole record, its recipes (staleRecipes = true)
+-- It's only kept while it's newer than our whole copy (StoreRecord drops it
+-- when the record arrives). Our own record is never partial.
+------------------------------------------------------------------------
+local MAX_PARTIALS = 1000
+
+-- once a session: drop summaries no newer than the whole record (an older
+-- FableHub run meanwhile updated members but not partials), and share the
+-- whole record's recipe tables again (saved data stores them as copies)
+function CheckPartials(g)
+  for key, part in pairs(g.partials) do
+    local m = g.members[key]
+    if m and (m.ts or 0) >= (part.ts or 0) then g.partials[key] = nil
+    elseif m and part.staleRecipes then CarryRecipes(part, m) end
+  end
+end
+
+-- Is a summary newer than anything we hold of that character? (Only then is
+-- it of use: a summary of a version we hold whole, or hold as a summary
+-- already, brings nothing, as every copy of a version is the same.)
+local function SummaryNew(g, rec)
+  local m, p = g.members[rec.key], g.partials[rec.key]
+  return (rec.ts or 0) > math.max(m and (m.ts or 0) or -1, p and (p.ts or 0) or -1)
+end
+
+-- would this summary change anything we hold? (roster members only, and
+-- never our own character)
+function ns.SummaryUseful(rec)
+  local g = ns.GuildDB()
+  if not g or not rec or not rec.key or rec.key == ns.MyKey() then return false end
+  if not ns.roster[rec.key] then return false end
+  return SummaryNew(g, rec)
+end
+
+-- Store a batch of decoded summaries; DATA_CHANGED fires once. Returns how
+-- many changed something. (g, the guild table, may be left out:
+-- ns.StoreSummaries(list))
+function ns.StoreSummaries(g, list)
+  if list == nil then g, list = nil, g end
+  g = g or ns.GuildDB()
+  if not g or type(list) ~= "table" or not next(ns.roster) then return 0 end
+  local me = ns.MyKey()
+  local count = 0
+  for _ in pairs(g.partials) do count = count + 1 end
+  local changed = 0
+  for _, rec in ipairs(list) do
+    local key = rec.key
+    if key and key ~= me and ns.roster[key] and SummaryNew(g, rec) then
+      if g.partials[key] or count < MAX_PARTIALS then
+        if not g.partials[key] then count = count + 1 end
+        rec.partial = true
+        rec.outputs = nil
+        for _, p in pairs(rec.profs or {}) do p.recipes = {} end
+        local m = g.members[key]
+        if m then CarryRecipes(rec, m) end
+        g.partials[key] = rec
+        changed = changed + 1
+      end
+    end
+  end
+  if changed > 0 then ns.Fire("DATA_CHANGED") end
+  return changed
+end
+
+-- What the UI shows for a character: the newest we have, a summary while its
+-- record is on the way (`g`: the guild table, when the caller has it)
+function ns.MemberRecord(key, g)
+  g = g or ns.GuildDB()
+  if not g or not key then return nil end
+  return (g.partials and g.partials[key]) or g.members[key]
+end
+
+-- catch-up progress for the UI: partial = characters whose recipes haven't
+-- arrived yet, total = characters we hold anything for (roster members once
+-- the roster has loaded), active = a catch-up is being answered right now
+function ns.SyncProgress()
+  local g = ns.GuildDB()
+  local out = { partial = 0, total = 0, active = ns.CatchUpActive and ns.CatchUpActive() or false }
+  if not g then return out end
+  local haveRoster = next(ns.roster) ~= nil
+  for key in pairs(g.members) do
+    if not haveRoster or ns.roster[key] then out.total = out.total + 1 end
+  end
+  for key in pairs(g.partials or {}) do
+    if not haveRoster or ns.roster[key] then
+      out.partial = out.partial + 1
+      if not g.members[key] then out.total = out.total + 1 end
+    end
+  end
+  return out
 end
 
 -- Our own record lives in db.chars and is mirrored into the guild table.
 function ns.MirrorMyRecord()
   local g = ns.GuildDB()
   local rec = ns.MyRecord()
-  if g and rec then g.members[rec.key] = rec end
+  if g and rec then
+    g.members[rec.key] = rec
+    if g.partials then g.partials[rec.key] = nil end
+  end
 end
 
 ------------------------------------------------------------------------

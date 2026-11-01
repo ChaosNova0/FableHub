@@ -421,7 +421,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     local out = {}
     for i, k in ipairs(keys) do
       if i > max then out[#out + 1] = UI.Dim("+" .. (#keys - max), 0.5); break end
-      local rec = ns.GuildDB() and ns.GuildDB().members[k]
+      local rec = ns.MemberRecord(k)
       local cls = (rec and rec.class) or (ns.roster[k] and ns.roster[k].class)
       out[#out + 1] = UI.NameCell(k, cls, true)
     end
@@ -544,7 +544,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     b1.head:SetText("YOUR SIGN-UP")
     local c = STATUS_COLORS[st] or GREEN
     b1.lines[1]:SetText(UI.Colorize(E.STATUS[st] or "", c[1], c[2], c[3]))
-    local charRec = ns.GuildDB() and ns.GuildDB().members[b.char]
+    local charRec = ns.MemberRecord(b.char)
     local charCls = (charRec and charRec.class) or (ns.roster[b.char] and ns.roster[b.char].class)
     b1.lines[2]:SetText(UI.NameCell(b.char, charCls, true) .. (role and UI.Dim("  ·  " .. role, 0.6) or ""))
     changeLink.text:SetTextColor(ar, ag, ab, 1)

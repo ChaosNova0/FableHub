@@ -204,11 +204,20 @@ end
 ------------------------------------------------------------------------
 -- Reading anyone's cooldowns
 ------------------------------------------------------------------------
+-- Records keep every well-formed cooldown entry they were sent (Encode.lua
+-- decodes the same for every version), so only cooldowns FableHub knows, of
+-- a profession the record has, are shown: nobody can hang made-up cooldowns
+-- on a record.
+local function Shown(rec, id)
+  local cd = ns.COOLDOWN_BY_ID[id]
+  return cd ~= nil and rec.profs ~= nil and rec.profs[cd.skillLine] ~= nil
+end
+
 -- nil if the record has no such cooldown, else
 -- { state = "ready"|"soon"|"cooling"|"unknown", left, ready, dur, age }
 function CD.Info(rec, id)
   local e = rec and rec.cds and rec.cds[id]
-  if not e then return nil end
+  if not e or not Shown(rec, id) then return nil end
   local now = ns.Now()
   local left = (e.ready or 0) - now
   local age = now - (rec.cdChecked or rec.ts or 0)
@@ -223,7 +232,7 @@ function CD.Of(rec)
   local out = {}
   if rec and rec.cds then
     for _, cd in ipairs(ns.COOLDOWNS) do
-      if rec.cds[cd.id] then out[#out + 1] = cd end
+      if rec.cds[cd.id] and Shown(rec, cd.id) then out[#out + 1] = cd end
     end
   end
   return out

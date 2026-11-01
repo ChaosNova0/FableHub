@@ -7,14 +7,16 @@ local UI = ns.UI
 local SECONDARY = { [185] = "Cooking", [356] = "Fishing", [129] = "First Aid", [794] = "Archaeology" }
 ns.SECONDARY = SECONDARY
 
--- Merge the live guild roster with stored FableHub records.
+-- Merge the live guild roster with stored FableHub records (a character's
+-- summary while its whole record is on the way: see ns.MemberRecord).
 function ns.AllMembers()
   local g = ns.GuildDB()
   local stored = g and g.members or {}
+  local partials = g and g.partials or {}
   local out, seen = {}, {}
   local haveRoster = next(ns.roster) ~= nil
   for _, key in ipairs(ns.rosterOrder) do
-    out[#out + 1] = { key = key, roster = ns.roster[key], rec = stored[key] }
+    out[#out + 1] = { key = key, roster = ns.roster[key], rec = partials[key] or stored[key] }
     seen[key] = true
   end
   local mine = ns.MyRecord()
@@ -24,6 +26,9 @@ function ns.AllMembers()
   end
   if not haveRoster then -- roster not loaded yet: show what we have stored
     for key, rec in pairs(stored) do
+      if not seen[key] then out[#out + 1] = { key = key, rec = partials[key] or rec }; seen[key] = true end
+    end
+    for key, rec in pairs(partials) do
       if not seen[key] then out[#out + 1] = { key = key, rec = rec } end
     end
   end

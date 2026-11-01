@@ -99,8 +99,7 @@ end
 ------------------------------------------------------------------------
 local function RecordFor(key)
   if key == ns.MyKey() then return ns.MyRecord() end
-  local g = ns.GuildDB()
-  return g and g.members[key]
+  return ns.MemberRecord(key)
 end
 
 -- skill in a profession, or nil when we don't know (member not using FableHub)

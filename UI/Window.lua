@@ -1035,11 +1035,17 @@ function UI.RefreshChrome()
     members = members + 1
     if r.online then membersOnline = membersOnline + 1 end
   end
+  -- third line: the version (and any update), or while a catch-up is being
+  -- answered and records are still on the way, how far it got
+  local third = ns.updateAvailable and UI.Colorize(("v%s  ·  update: %s"):format(ns.VERSION, ns.updateAvailable), T.Accent())
+    or UI.Dim("v" .. ns.VERSION, 0.3)
+  local sync = ns.SyncProgress()
+  if sync.active and sync.partial > 0 then
+    third = UI.Dim(("Syncing guild data...  %d of %d"):format(sync.total - sync.partial, sync.total), 0.6)
+  end
   main.sideStatus:SetText(("%s %d of %d online\n%s %d use FableHub (%d online)\n%s"):format(
     ns.Icons.Dot(true, 7), membersOnline, members,
-    ns.Icons.Dot(false, 7), users, online,
-    ns.updateAvailable and UI.Colorize(("v%s  ·  update: %s"):format(ns.VERSION, ns.updateAvailable), T.Accent())
-      or UI.Dim("v" .. ns.VERSION, 0.3)))
+    ns.Icons.Dot(false, 7), users, online, third))
 end
 
 local refreshPending = false
@@ -1057,6 +1063,7 @@ UI.QueueRefresh = QueueRefresh
 ns.On("DATA_CHANGED", QueueRefresh)
 ns.On("ROSTER_CHANGED", QueueRefresh)
 ns.On("UPDATE_AVAILABLE", QueueRefresh)
+ns.On("SYNC_STATE", QueueRefresh)
 
 function ns.ToggleUI()
   if not main then Build() end
@@ -1156,7 +1163,7 @@ function UI.PickMember(title, onPick, opts)
         b.key = key
         if key then
           local r = ns.roster[key]
-          local rec = ns.GuildDB() and ns.GuildDB().members[key]
+          local rec = ns.MemberRecord(key)
           local classFile = (rec and rec.class) or (r and r.class)
           b.text:SetText(UI.NameCell(key, classFile, r and r.online) ..
             UI.Dim("  " .. ((r and r.level) and ("lvl " .. r.level) or ""), 0.4))

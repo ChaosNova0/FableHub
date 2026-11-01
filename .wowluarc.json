@@ -2,7 +2,7 @@
   "ignore": ["Libs/", "tests/"],
   "flavors": ["forever"],
   "globals": {
-    "read": ["FABLEHUB_TEST_EPOCH"],
+    "read": ["FABLEHUB_TEST_EPOCH", "FABLEHUB_TEST_SHA256"],
     "write": ["FableHub"]
   }
 }

@@ -79,7 +79,7 @@ ns.RegisterPanel("alts", "Alts", nil, function(panel)
   local function Row(key, indent, isHeader, extra)
     local g = ns.GuildDB()
     local r = ns.roster[key]
-    local rec = (g and g.members and g.members[key]) or FableHubDB.chars[key]
+    local rec = (g and ns.MemberRecord(key, g)) or FableHubDB.chars[key]
     local classFile = (rec and rec.class) or (r and r.class)
     local online = (r and r.online) or key == ns.MyKey()
     local profs = {}
