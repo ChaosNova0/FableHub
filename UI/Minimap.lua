@@ -58,28 +58,13 @@ local function Create()
   button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   button:RegisterForDrag("LeftButton")
 
-  local ring = button:CreateTexture(nil, "BACKGROUND")
-  ring:SetTexture(ns.Icons.ROUND)
-  ring:SetAllPoints()
-  local bg = button:CreateTexture(nil, "BORDER")
-  bg:SetTexture(ns.Icons.ROUND)
-  bg:SetPoint("TOPLEFT", 2, -2)
-  bg:SetPoint("BOTTOMRIGHT", -2, 2)
-  bg:SetVertexColor(T.bg[1], T.bg[2], T.bg[3], 1)
-
+  -- the logo is already a round framed badge, so it fills the button with no ring or mask
   local icon = button:CreateTexture(nil, "ARTWORK")
-  icon:SetTexture("Interface\\Icons\\INV_Misc_Book_09")
-  icon:SetPoint("TOPLEFT", 6, -6)
-  icon:SetPoint("BOTTOMRIGHT", -6, 6)
-  if icon.SetMask then
-    pcall(icon.SetMask, icon, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
-  end
+  icon:SetTexture(ns.Icons.LOGO)
+  icon:SetAllPoints()
 
   local function Paint(hover)
-    local r, g, b = T.Accent()
-    ring:SetVertexColor(r, g, b, hover and 1 or 0.7)
-    icon:SetDesaturated(false)
-    icon:SetAlpha(hover and 1 or 0.85)
+    icon:SetAlpha(hover and 1 or 0.9)
   end
   Paint(false)
 

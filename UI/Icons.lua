@@ -7,6 +7,7 @@ ns.Icons = I
 local MEDIA = "Interface\\AddOns\\FableHub\\Media\\"
 I.DOT = MEDIA .. "dot.tga"
 I.ROUND = MEDIA .. "round.tga"
+I.LOGO = MEDIA .. "logo.tga"
 
 -- fallback profession icons by skill line
 local PROF_ICONS = {
