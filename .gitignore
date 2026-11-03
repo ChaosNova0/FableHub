@@ -11,3 +11,7 @@ tests/
 
 # kept here for safe keeping, never shipped
 FableHubicon.png
+
+# Claude Code project files: kept on this PC, not on GitHub
+.claude/
+CLAUDE.md
