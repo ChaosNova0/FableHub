@@ -178,25 +178,20 @@ end
 ------------------------------------------------------------------------
 -- The group to check camp buffs against
 ------------------------------------------------------------------------
--- keys of the people in your party/raid right now
+-- keys of the guild members in your party/raid right now (just you when
+-- you're not in a group). Matched exactly (Rolls.lua R.Group), so a pug
+-- sharing a guild member's name doesn't count as them.
 function C.GroupKeys()
-  local out = { ns.MyKey() }
-  if IsInRaid and IsInRaid() then
-    out = {}
-    for i = 1, (GetNumGroupMembers and GetNumGroupMembers()) or 0 do
-      local key = ns.Events.ResolveKey((GetRaidRosterInfo(i)))
-      if key then out[#out + 1] = key end
-    end
-  elseif IsInGroup and IsInGroup() then
-    for i = 1, 4 do
-      local unit = "party" .. i
-      if UnitExists and UnitExists(unit) then
-        local name, realm = UnitFullName(unit)
-        local key = name and ns.Events.ResolveKey(realm and realm ~= "" and (name .. "-" .. realm) or name)
-        if key then out[#out + 1] = key end
-      end
-    end
+  if not ((IsInRaid and IsInRaid()) or (IsInGroup and IsInGroup())) or not ns.Rolls then
+    return { ns.MyKey() }
   end
+  local out, seen = {}, {}
+  for key in pairs(ns.Rolls.GroupKeys()) do
+    if not seen[key] then seen[key] = true; out[#out + 1] = key end
+  end
+  local me = ns.MyKey()
+  if me and not seen[me] then out[#out + 1] = me end
+  table.sort(out)
   return out
 end
 

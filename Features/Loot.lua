@@ -1,9 +1,34 @@
 -- Loot: That's My BIS priorities, loot history, automatic recording, awards and tooltips.
+-- The award window (UI/Pages/Loot.lua) opens by itself only for the master looter
+-- (L.IsMasterLooter) when ns.Option("awardWindow") is on; rolls are Features/Rolls.lua.
+-- Tooltip lines follow ns.Option("lootTooltip").
 --
 -- g.tmb   = { ts, by, items = { [itemID] = { { c = lowercase name, o = order, t = 1 prio | 2 wish } } },
 --             notes = { [itemID] = text }, tiers = { [itemID] = tier } }
 -- g.loot  = { [entryId] = { id, item, to, at, ts, by, inst, note, prio, deleted } }
 -- g.seen  = { [itemID] = instance name }   items seen dropping in raids
+--
+-- Pug raids (L.IsGuildGroup): loot history only keeps loot from guild groups,
+-- where at least half the group (raid or party) are guild members by an exact
+-- match (Rolls.lua R.Group: GUID or full name). Exactly half counts as a guild
+-- group. Outside any group it counts as one, so awarding from Loot history after
+-- the raid still records. In a group whose members haven't loaded yet (just
+-- after zoning in or a /reload) it counts as a pug group, so nothing records by
+-- mistake. In a pug group awards are still announced but not recorded, and loot
+-- lines aren't recorded either. Adding an entry by hand in Loot history always
+-- records (an officer typed it in on purpose). Items seen dropping (g.seen) and
+-- attendance are kept as usual.
+-- The award window (UI/Pages/Loot.lua) decides pug or guild group once when it
+-- opens in a group (and again each time it's opened for new drops), and passes
+-- it to L.Award as opts.pug, so people leaving mid-way don't change it.
+--
+-- Loot lines ("Bob receives loot: ...") are only recorded in a raid inside a
+-- raid instance, never in a party. They're recorded for the group member the
+-- name belongs to: a name that is exactly theirs, or a spelling of it no one
+-- else in the group shares (R.Lookup), and only if they're a guild member by an
+-- exact match. A "You receive" line records for ourselves only once our own key
+-- is confirmed in the guild roster. A stranger sharing a guild member's first
+-- name, or a spelling two group members share, records nothing.
 
 local _, ns = ...
 local Enc, P = ns.Encode, ns.Plans
@@ -703,14 +728,30 @@ local function LootPatterns()
   return patterns
 end
 
+-- "Bob receives loot: [link]." -> "Bob", link ; "You receive loot: [link]." -> our key, link, true
 function L.ParseLootMessage(msg)
   for _, pat in ipairs(LootPatterns()) do
     local a, b = msg:match(pat.p)
     if a then
-      if pat.self then return ns.MyKey(), a end
-      return a, b
+      if pat.self then return ns.MyKey(), a, true end
+      return a, b, false
     end
   end
+end
+
+-- Is this a guild group? At least half of the raid or party are guild members
+-- by an exact match (see the header). True when we're not in a group at all;
+-- false in a group we can't see anyone in yet (still loading).
+function L.IsGuildGroup()
+  local grp = ns.Rolls.Group()
+  local n = grp.n or 0
+  if n == 0 then
+    local inGroup = (IsInRaid and IsInRaid()) or (IsInGroup and IsInGroup())
+    return not inGroup
+  end
+  local count = 0
+  for _, m in pairs(grp.members) do if m.key ~= nil then count = count + 1 end end
+  return count * 2 >= n
 end
 
 local function InRaidInstance()
@@ -734,13 +775,24 @@ ns.RegisterEvent("CHAT_MSG_LOOT", function(msg)
   if not P.CanEdit("loot") then return end
   local inRaid, inst = InRaidInstance()
   if not inRaid then return end
-  local who, link = L.ParseLootMessage(msg)
+  local who, link, isSelf = L.ParseLootMessage(msg)
   local itemID = L.ItemIdFromLink(link)
   if itemID then L.ItemInfo(itemID) end
   if not who or not itemID then return end
   local q = Quality(link, itemID)
   if not q or q < L.QUALITY then return end
-  local key = who == ns.MyKey() and who or ns.Events.ResolveKey(who)
+  -- pug raids aren't kept in loot history
+  if not L.IsGuildGroup() then return end
+  -- only the group member this name belongs to, and only if they're a guild
+  -- member (ourselves only once our key is confirmed in the guild roster)
+  local key
+  if isSelf then
+    local me = ns.MyKey()
+    key = ns.roster[me] and me or nil
+  else
+    local m = ns.Rolls.Lookup(who)
+    key = m and m.key
+  end
   if not key then return end
   local prio
   for _, p in ipairs((L.ItemPriorities(itemID))) do if p.key == key then prio = p.order break end end
@@ -756,15 +808,85 @@ L.settings = function()
   return s
 end
 
+-- Are we the master looter? true / false, or nil when this client can't tell
+-- (no loot method API). Forever has C_PartyInfo.GetLootMethod(): an
+-- Enum.LootMethod number, the master looter's party index and raid index; older
+-- clients GetLootMethod() with "master" instead of the number. The party index
+-- is 0 when it's us, in a party and in a raid alike (it's nil when the master
+-- looter isn't in our party or raid group), so no names are compared.
+function L.IsMasterLooter()
+  local method, partyML
+  if C_PartyInfo and C_PartyInfo.GetLootMethod then
+    method, partyML = C_PartyInfo.GetLootMethod()
+  elseif GetLootMethod then
+    method, partyML = GetLootMethod()
+  end
+  if method == nil then return nil end
+  local master = method == "master"
+    or (type(method) == "number" and Enum and Enum.LootMethod and method == Enum.LootMethod.Masterlooter)
+  if not master then return false end
+  return partyML == 0
+end
+
+-- With the loot window open as master looter: the loot slot holding the item
+-- and the candidate number of group member `memberId` (see Rolls.lua R.Group).
+-- Candidates are matched by their exact name; a spelling two group members
+-- share is never used. Returns nil (and why) when it can't be given that way.
+function L.MasterLootTarget(itemID, memberId)
+  if not (GetNumLootItems and GetMasterLootCandidate and GiveMasterLoot) then return nil end
+  if not memberId then return nil, "not in group" end
+  local R = ns.Rolls
+  for slot = 1, GetNumLootItems() do
+    local link = GetLootSlotLink and GetLootSlotLink(slot)
+    if link and L.ItemIdFromLink(link) == itemID then
+      for i = 1, 40 do
+        local name = GetMasterLootCandidate(slot, i)
+        local m = name and R.Lookup(name)
+        if m and m.id == memberId then return slot, i end
+      end
+      return nil, "not eligible"
+    end
+  end
+  return nil, "not in the loot window"
+end
+
+-- Asks the game to hand the item over through master loot. Returns the loot
+-- slot when the request was made (whether it worked shows when the slot
+-- empties: see the award window), or nil and why not.
+function L.GiveMasterLoot(itemID, memberId)
+  local slot, cand = L.MasterLootTarget(itemID, memberId)
+  if not slot then return nil, cand end
+  if not pcall(GiveMasterLoot, slot, cand) then return nil, "refused" end
+  return slot
+end
+
+-- Says who got it in raid (or party) chat, when announcing is on
+function L.AnnounceAward(itemID, name, opts)
+  opts = opts or {}
+  if not ns.Option("lootAnnounce") or not SendChatMessage then return end
+  local chan = (IsInRaid and IsInRaid() and "RAID") or (IsInGroup and IsInGroup() and "PARTY") or nil
+  if not chan then return end
+  local info = L.ItemInfo(itemID)
+  local what = (info and info.link) or ("item " .. itemID)
+  local why = opts.prio and (" (prio " .. opts.prio .. ")") or (opts.wish and (" (wishlist " .. opts.wish .. ")") or "")
+  pcall(SendChatMessage, ("%s awarded to %s%s"):format(what, name, why), chan)
+end
+
+-- Records a guild member's award in loot history and announces it. Returns the
+-- loot history entry. In a pug group nothing is recorded: the award is only
+-- announced, and it returns nil, "pug". opts.pug (true / false) is what the
+-- award window decided when it opened; when nil it's L.IsGuildGroup() now.
 function L.Award(itemID, key, opts)
   opts = opts or {}
-  local e = L.Record(itemID, key, { prio = opts.prio, note = opts.note })
-  if e and ns.Option("lootAnnounce") and IsInRaid and IsInRaid() and SendChatMessage then
-    local info = L.ItemInfo(itemID)
-    local what = (info and info.link) or ("item " .. itemID)
-    local why = opts.prio and (" (prio " .. opts.prio .. ")") or (opts.wish and (" (wishlist " .. opts.wish .. ")") or "")
-    pcall(SendChatMessage, ("%s awarded to %s%s"):format(what, ns.ShortName(key), why), "RAID")
+  if not itemID or not key or not P.CanEdit("loot") then return nil end
+  local pug = opts.pug
+  if pug == nil then pug = not L.IsGuildGroup() end
+  if pug then
+    L.AnnounceAward(itemID, ns.ShortName(key), opts)
+    return nil, "pug"
   end
+  local e = L.Record(itemID, key, { prio = opts.prio, note = opts.note })
+  if e then L.AnnounceAward(itemID, ns.ShortName(key), opts) end
   return e
 end
 
@@ -772,7 +894,7 @@ end
 -- Tooltips: prio list, wishlist, and who already has it
 ------------------------------------------------------------------------
 local function AddLootLines(tooltip, itemID)
-  if not itemID or not IsInGuild() then return end
+  if not itemID or not IsInGuild() or not ns.Option("lootTooltip") then return end
   local g = G()
   if not g then return end
   local prio, wish = L.ItemPriorities(itemID)

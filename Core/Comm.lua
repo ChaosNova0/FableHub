@@ -22,6 +22,14 @@
 --   E  summaries  (0.25+) records without their recipes, sent ahead of the F
 --                 records in a catch-up answer (see Enc.EncodeSummaryBatch)
 --
+-- Group channel (raid / party): only roll popups (o, see Rolls.lua), one part
+-- each, sent with ns.SendGroup and handled by ns.GroupHandlers. They never reach
+-- ns.CommHandlers, the catch-up or anything else here, and the guild handlers
+-- never see raid or party input. FableHub sends them even in combat or a boss
+-- fight (they're tiny and only matter right now; the game itself may still hold
+-- addon messages back during an encounter), ahead of guild messages, and drops
+-- them if they waited longer than their time to live.
+--
 -- Only each character's owner changes their own record. Other users relay
 -- copies so data reaches people who were offline at the time. Owners
 -- announce the checksum (Hash.lua) of their record's current version in their
@@ -83,9 +91,22 @@ local function Paused()
   return false
 end
 
-local function SendRaw(msg, target)
+-- message types allowed on the raid / party channel (see the header)
+local GROUP_TYPES = { o = true }
+ns.GroupHandlers = {}
+local function GroupChannel()
+  if IsInRaid and IsInRaid() then return "RAID" end
+  if IsInGroup and IsInGroup() then return "PARTY" end
+end
+
+local function SendRaw(msg, target, group)
   local ok, res
-  if target then
+  if group then
+    -- (the channel is picked as it goes out: a party may have become a raid)
+    local chan = GroupChannel()
+    if not chan then return "drop" end
+    ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, chan)
+  elseif target then
     ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "WHISPER", target)
   else
     ok, res = pcall(C_ChatInfo.SendAddonMessage, PREFIX, msg, "GUILD")
@@ -128,23 +149,36 @@ local function Restart(item)
 end
 
 local function Pump()
-  if #sendQueue == 0 or not IsInGuild() or Paused() then return end
+  if #sendQueue == 0 or not IsInGuild() then return end
+  -- (combat and boss fights hold everything but the urgent group messages,
+  -- which sit at the front of the queue)
+  local paused = Paused()
+  if paused and not sendQueue[1].urgent then return end
   local now = GetTime()
   tokens = math.min(MAX_TOKENS, tokens + (now - lastRegen) * REGEN)
   lastRegen = now
   while tokens >= 1 and #sendQueue > 0 do
     local item = sendQueue[1]
+    if paused and not item.urgent then break end
+    -- a roll message that waited too long is no use any more
+    while item and item.expires and now > item.expires do
+      Dequeue()
+      item = sendQueue[1]
+    end
+    if not item or (paused and not item.urgent) then break end
     if item.part > 1 and item.all and partAt[item.id] and now - partAt[item.id] > RESTART_AFTER then
       Restart(item)
       item = sendQueue[1]
     end
     -- (every part of a whisper to the same spelling: one that fails partway
     -- fails whole, and goes again whole, see Catchup.lua)
-    local to = item.form or (item.target and (sentForm[item.id] or ns.WhisperTarget(item.target)))
+    local to = not item.group and (item.form or (item.target and (sentForm[item.id] or ns.WhisperTarget(item.target)))) or nil
     if to and item.target and item.part == 1 and item.total > 1 then sentForm[item.id] = to end
     if to then ns.NoteWhisper(to, item.target) end
-    local result = SendRaw(item.msg, to)
-    if not to and result == "ok" and not firstGuildSend then
+    local result = SendRaw(item.msg, to, item.group)
+    -- (a raid message isn't a guild send: it mustn't start the guild channel
+    -- check, or keep anyone's catch-up window open)
+    if not to and not item.group and result == "ok" and not firstGuildSend then
       firstGuildSend = GetTime()
       C_Timer.After(20, function() ns.CheckGuildEcho() end)
     end
@@ -163,7 +197,7 @@ local function Pump()
     -- see RequesterWindowOpen. With the guild channel muted, guild messages go
     -- out as whispers to each FableHub user: only lastSendTo counts then, as a
     -- whisper to one member doesn't keep anyone else's window open)
-    if result == "ok" and not to then lastGuildSendAt = GetTime() end
+    if result == "ok" and not to and not item.group then lastGuildSendAt = GetTime() end
     if result == "ok" and item.target then lastSendTo[item.target] = GetTime() end
     Dequeue()
     tokens = tokens - 1
@@ -254,6 +288,21 @@ function Queue(msgType, payload, opts)
     digestSentAt[dig] = GetTime()
     lastDigestAt = GetTime()
   end
+  -- raid / party (roll popups): one part, ahead of everything but the other
+  -- group messages already waiting (so a start stays ahead of its own stop)
+  if opts.group then
+    if not GROUP_TYPES[msgType] or #payload > CHUNK then return nil end
+    local sig = msgType .. "\2group\1" .. payload
+    if waitingSig[sig] then return nil end
+    local id = NewId()
+    local at = 1
+    while sendQueue[at] and sendQueue[at].urgent do at = at + 1 end
+    table.insert(sendQueue, at, { msg = table.concat({ msgType, id, 1, 1, payload }, "#"), id = id, part = 1, total = 1,
+                                  group = true, urgent = true, front = true, expires = GetTime() + (opts.ttl or 10), sig = sig })
+    waitingSig[sig] = true
+    queuedCount = queuedCount + 1
+    return id
+  end
   if not target and ns.guildMuted then
     local peers = WhisperPeers(msgType == "H")
     for i, key in ipairs(peers) do
@@ -269,7 +318,9 @@ function Queue(msgType, payload, opts)
   if recSlot and waitingRecord[recSlot] then Unqueue(waitingRecord[recSlot]) end
   local id = NewId()
   local total = math.max(1, math.ceil(#payload / CHUNK))
-  local at = front == "after" and AfterFront() or 1
+  local at = 1
+  if front == "after" then at = AfterFront()
+  elseif front then while sendQueue[at] and sendQueue[at].urgent do at = at + 1 end end
   -- (every part's text, shared by its parts: see Restart)
   local all = total > 1 and {} or nil
   for i = 1, total do
@@ -290,6 +341,9 @@ ns.QueueMsg = Queue
 
 -- to the whole guild
 function ns.Send(msgType, payload) return Queue(msgType, payload) end
+
+-- to our raid or party (roll popups only, see the header); ttl: seconds it may wait
+function ns.SendGroup(msgType, payload, ttl) return Queue(msgType, payload, { group = true, ttl = ttl }) end
 
 -- to one member only (addon whisper): for data not everyone may see
 function ns.SendTo(target, msgType, payload)
@@ -1779,10 +1833,32 @@ function Dispatch(sender, msgType, payload, answering, channel, loose)
   if not ok then error(err, 0) end
 end
 
+-- A raid / party message (roll popups). Only GROUP_TYPES, one part each. The
+-- handler gets the sender's guild key by exact name (or nil: the handler then
+-- matches them through the group itself, see Rolls.lua) and the raw name, and
+-- does the rest of the checks. Nothing else in this file sees it.
+local function OnGroupMessage(text, raw, channel)
+  if type(text) ~= "string" or #text > 120 then return end
+  if text:find("|", 1, true) then text = text:gsub("|", "") end
+  local msgType, payload = text:match("^(%a)#%w+#1#1#(.*)$")
+  if not msgType or not GROUP_TYPES[msgType] then return end
+  local handler = ns.GroupHandlers[msgType]
+  if not handler then return end
+  if type(raw) ~= "string" or raw == "" or #raw > 80 then return end
+  local who = ns.ResolveSender(raw, true)
+  if who and who == ns.MyKey() then return end
+  if ns.Diag then ns.Diag.NoteRecv(raw, channel, PREFIX) end
+  local ok, err = pcall(handler, who, payload, channel, raw)
+  if not ok then ns.ReportError(err) end
+end
+
 function ns.OnAddonMessage(prefix, text, channel, sender)
-  if channel ~= "GUILD" and channel ~= "WHISPER" then return end
   if prefix ~= PREFIX then return end
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then return end
+  if channel == "RAID" or channel == "PARTY" or channel == "INSTANCE_CHAT" then
+    return OnGroupMessage(text, sender, channel)
+  end
+  if channel ~= "GUILD" and channel ~= "WHISPER" then return end
   if ns.Diag then ns.Diag.NoteRecv(sender, channel, prefix) end
   local raw = sender
   sender = ns.NormalizeName(sender)

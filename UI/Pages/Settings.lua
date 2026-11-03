@@ -130,6 +130,10 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   L:Header("Raids")
   L:Option("Check buffs and enchants at ready checks", "readyCheckAuto", "Fills the Raids > Ready check page every time a ready check starts. Check now still works when this is off.")
 
+  L:Header("Loot")
+  L:Option("Prio lists in item tooltips", "lootTooltip", "Adds the prio list, wishlist and who already has the item to item tooltips. Turn it off if another addon (such as Gargul) already shows them.")
+  L:Option("Show roll popups", "rollPopup", "When an officer starts a roll, a small window shows the item with Main spec, Off spec and Pass buttons. Turn it off if you use another addon's roll window (such as Gargul's). Typing /roll always works. /fhub testroll shows a sample to drag into place.")
+
   L:Header("Privacy")
   L:Toggle("Share my time played with the guild", function() return ns.Option("sharePlayed") end,
     function(v) ns.Played.SetSharing(v) end,
@@ -151,6 +155,17 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   local rankNote = R:Note()
   R:Button("Feature permissions", 220, function() UI.ShowPanel("permissions") end)
   local lootToggle = R:Option("Announce awarded loot in raid chat", "lootAnnounce")
+  local awardToggle = R:Option("Award window when I'm master looter", "awardWindow",
+    "Opens FableHub's award window when you loot as master looter, with rolls, prio lists and attendance. Turn it off if your guild hands out loot with another addon, such as Gargul. Loot history is still recorded either way.")
+  local rollBtn = R:Button("Roll length", 220, function(self)
+    if not P.CanEdit("loot") then return end
+    local items = {}
+    for _, s in ipairs(ns.Rolls.LENGTHS) do
+      items[#items + 1] = { text = s .. " seconds", checked = ns.Rolls.Length() == s,
+                            onClick = function() ns.Rolls.SetLength(s); panel:Refresh() end }
+    end
+    T.Menu(self, items, 160)
+  end)
   -- officers only (hidden for everyone else; see panel:Refresh)
   local changeLogBtn = R:Button("Change log", 220, function()
     if P.CanEdit() and ns.ChangeLog then ns.ChangeLog.Show() end
@@ -216,6 +231,9 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
     rankNote:SetText(P.IsGuildMaster() and "You're the Guild Master, so you choose this."
       or "Only the Guild Master can change this.")
     lootToggle:SetAlpha(P.CanEdit() and 1 or 0.5)
+    awardToggle:SetAlpha(P.CanEdit("loot") and 1 or 0.5)
+    rollBtn:SetText(("Roll length: %d seconds"):format(ns.Rolls.Length()))
+    rollBtn:SetAlpha(P.CanEdit("loot") and 1 or 0.5)
     changeLogBtn:SetShown(P.CanEdit())
     if ns.Now() > confirmUntil then clearBtn:SetText("Clear stored guild data") end
     version:SetText(("FableHub %s%s"):format(ns.VERSION or "", P.CanEdit() and "  ·  you're an officer" or ""))

@@ -37,22 +37,56 @@ local function ItemTooltip(tt, itemID)
 end
 
 ------------------------------------------------------------------------
--- Award window (opens when an officer loots in a raid, or from Loot history)
+-- Award window: opens by itself when you loot as master looter (Settings >
+-- Officers can turn that off), or from Loot history's Award button.
+-- Drops are listed by position, so two copies of one item each get their own
+-- roll and their own winner. Candidates: anyone who rolled (main spec, then
+-- off spec), then the prio list, the wishlist, and the rest of the group.
+-- People in the group are told apart by their exact names (Rolls.lua
+-- R.Group): pugs can roll and be given loot, and are never mistaken for a
+-- guild member. Only guild members' awards go into loot history, and only in
+-- a guild group (Features/Loot.lua L.IsGuildGroup): in a pug group awards are
+-- announced but not kept. Whether it's a pug group (award.pug) is decided each
+-- time the window is opened in a group and then stays put while it's open, so
+-- people leaving (or us leaving) mid-way don't change it; opened outside a
+-- group it's nil and checked live. Someone who rolled and then left the group
+-- stays listed, marked "not in raid" (c.gone, worked out again on every
+-- refresh): they can still be awarded, but only handed the item through master
+-- loot while they're in the group right now.
 ------------------------------------------------------------------------
 local award
-local function RaidKeys()
-  local out = {}
-  local n = (IsInRaid and IsInRaid() and GetNumGroupMembers and GetNumGroupMembers()) or 0
-  for i = 1, n do
-    local key = ns.Events.ResolveKey((GetRaidRosterInfo(i)))
-    if key then out[key] = true end
-  end
-  return out
+local Rolls = ns.Rolls
+
+-- is this a pug group for the award window? (see award.pug above)
+local function IsPug()
+  if award and award.pug ~= nil then return award.pug end
+  return not L.IsGuildGroup()
 end
+local function PugLabel()
+  return (IsInRaid and IsInRaid()) and "Pug raid:" or "Pug group:"
+end
+-- Each drop has a tag (award.tags[i]) that its roll and its winner are kept
+-- under: reopening the corpse after giving one item keeps the others' rolls
+-- and winners even though their positions moved.
+local session, tagSeq = 0, 0
+local lootWin, lootOpen = 0, false -- which loot window is open (a give only counts in its own)
+
+local function RollText(r)
+  if not r then return "" end
+  local text = tostring(r.roll)
+  if r.tier == Rolls.TIER_MS then text = UI.Colorize(text, 0.45, 0.85, 0.45) .. UI.Dim(" MS", 0.5)
+  elseif r.tier == Rolls.TIER_OS then text = UI.Colorize(text, 0.85, 0.75, 0.4) .. UI.Dim(" OS", 0.5)
+  else text = UI.Dim(text .. (" (%d-%d)"):format(r.low, r.high), 0.45) end
+  if r.tie then text = text .. UI.Colorize(" tie", 0.95, 0.45, 0.4) end
+  if r.again then text = text .. UI.Colorize(" x" .. (r.again + 1), 0.95, 0.45, 0.4) end
+  return text
+end
+
+local function Tag(idx) return award and award.tags and award.tags[idx] end
 
 local function BuildAward()
   award = CreateFrame("Frame", "FableHubAwardFrame", UIParent)
-  award:SetSize(640, 360)
+  award:SetSize(720, 400)
   award:SetPoint("CENTER", 0, 80)
   award:SetFrameStrata("HIGH")
   award:SetMovable(true)
@@ -72,6 +106,23 @@ local function BuildAward()
   local close = T.CloseButton(award, function() award:Hide() end)
   close:SetPoint("TOPRIGHT", -8, -8)
 
+  -- roll controls (top right): Start roll / Stop now / Cancel roll, and the countdown
+  award.rollBtn = T.Button(award, "Start roll", 110, 22)
+  award.rollBtn:SetPoint("TOPRIGHT", -36, -10)
+  award.rollBtn:SetScript("OnClick", function()
+    local idx = award.sel
+    if not idx then return end
+    local cur = Rolls.current
+    if cur and cur.open and cur.tag == Tag(idx) then Rolls.Stop() return end
+    local ok, err = Rolls.Start(award.drops[idx], nil, Tag(idx))
+    if not ok and err then ns.Print(err) end
+  end)
+  award.cancelBtn = T.Button(award, "Cancel roll", 90, 22)
+  award.cancelBtn:SetPoint("RIGHT", award.rollBtn, "LEFT", -6, 0)
+  award.cancelBtn:SetScript("OnClick", function() if award.sel then Rolls.Cancel(Tag(award.sel)) end end)
+  award.rollText = T.Text(award, 12, 0.6)
+  award.rollText:SetPoint("RIGHT", award.cancelBtn, "LEFT", -10, 0)
+
   award.items = UI.CreateList(award, { { title = "Drops", flex = true } }, 26)
   award.items:SetPoint("TOPLEFT", 12, -42)
   award.items:SetPoint("BOTTOMLEFT", 12, 44)
@@ -80,6 +131,7 @@ local function BuildAward()
 
   award.cands = UI.CreateList(award, {
     { title = "Player", flex = true },
+    { title = "Roll", width = 76 },
     { title = "List", width = 60 },
     { title = "Attend.", width = 50, justify = "RIGHT", defaultAsc = false },
     { title = "Loot 30d", width = 56, justify = "RIGHT" },
@@ -91,110 +143,330 @@ local function BuildAward()
 
   award.note = T.Text(award, 11, 0.45)
   award.note:SetPoint("BOTTOMLEFT", 14, 18)
-  award.note:SetPoint("RIGHT", award, "RIGHT", -150, 0)
+  award.note:SetPoint("RIGHT", award, "RIGHT", -190, 0)
   award.note:SetJustifyH("LEFT")
-  award.btn = T.Button(award, "Award", 120, 24)
+  award.btn = T.Button(award, "Award", 170, 24)
   award.btn:SetPoint("BOTTOMRIGHT", -12, 12)
-  award.btn:SetScript("OnClick", function()
-    local item, cand = award.selectedItem, award.selectedCand
-    if not item or not cand then return end
-    local e = L.Award(item, cand.key, { prio = cand.type == L.TYPE_PRIO and cand.order or nil,
-      wish = cand.type == L.TYPE_WISH and cand.order or nil })
-    if e then
-      award.awarded[item] = cand.key
-      award.selectedCand = nil
-      award:Refresh()
+  award.btn:SetScript("OnClick", function() award:Click() end)
+
+  -- guild details per candidate, worked out once per set of drops
+  -- (attendance and loot counts don't change while a roll runs)
+  local function Stats(key)
+    award.stats = award.stats or {}
+    local s = award.stats[key]
+    if not s then
+      local attended, total = ns.Events.AttendanceStats(key, 30)
+      s = { attended = attended, total = total, loot = L.CountReceived(key, 30) }
+      award.stats[key] = s
     end
-  end)
+    return s
+  end
+
+  -- what the award button does for the current pick: "give" (through master
+  -- loot), "award" (record and announce), or nil
+  function award:Mode()
+    local c, idx = self.selectedCand, self.sel
+    if not c or not idx then return nil end
+    -- (in the group right now, not as when they were picked: someone who left
+    -- and came back can be given it again)
+    if self.fromLoot and c.id and Rolls.Group().members[c.id] and L.IsMasterLooter()
+       and L.MasterLootTarget(self.drops[idx], c.id) then
+      return "give"
+    end
+    return "award"
+  end
+
+  local function Finish(item, tag, c)
+    local opts = { prio = c.type == L.TYPE_PRIO and c.order or nil, wish = c.type == L.TYPE_WISH and c.order or nil,
+                   pug = award.pug }
+    if c.key then L.Award(item, c.key, opts) else L.AnnounceAward(item, c.name, opts) end
+    award.awarded[tag] = c.name
+    award.selectedCand = nil
+    award:Refresh()
+  end
+
+  function award:Click()
+    local idx, c = self.sel, self.selectedCand
+    if not idx or not c or self.pending then return end
+    local tag, item = Tag(idx), self.drops[idx]
+    local mode = self:Mode()
+    local conf = self.confirm
+    local confirmed = conf and conf.idx == idx and conf.id == (c.id or c.key) and GetTime() < conf.untilT
+    local function AskAgain(kind)
+      self.confirm = { idx = idx, id = c.id or c.key, untilT = GetTime() + 5, kind = kind }
+      self:Refresh()
+      local mine = self.confirm
+      C_Timer.After(5, function() if award.confirm == mine then award.confirm = nil; award:Refresh() end end)
+    end
+    if mode == "give" then
+      -- handing the item over can't be undone, so it takes a second click
+      if not (confirmed and conf.kind == "give") then return AskAgain("give") end
+      self.confirm = nil
+      local slot, why = L.GiveMasterLoot(item, c.id)
+      if not slot then
+        ns.Print(("Couldn't hand %s the item through master loot (%s). Nothing recorded."):format(c.name, why or "refused"))
+        return self:Refresh()
+      end
+      -- recorded only once the game says this slot of this loot window emptied
+      local p = { tag = tag, cand = c, slot = slot, item = item, win = lootWin }
+      self.pending = p
+      C_Timer.After(2, function() if award.pending == p then award:CheckGiven() end end)
+      return self:Refresh()
+    end
+    if confirmed and conf.kind == "give" then
+      -- the second click of a give, but the loot window closed in between
+      self.confirm = nil
+      ns.Print("The loot window closed before the item was handed over. Nothing recorded: trade it, then use Award.")
+      return self:Refresh()
+    end
+    -- this drop was already awarded: a second award takes a second click
+    if self.awarded[tag] and not (confirmed and conf.kind == "again") then return AskAgain("again") end
+    self.confirm = nil
+    Finish(item, tag, c)
+  end
+
+  -- Did the item leave the loot window? Only the same loot window counts: the
+  -- game saying that slot emptied (LOOT_SLOT_CLEARED), or 2 s later the slot
+  -- found empty with that window still open. Anything else records nothing.
+  function award:CheckGiven(clearedSlot)
+    local p = self.pending
+    if not p then return end
+    if clearedSlot and clearedSlot ~= p.slot then return end
+    local sameWindow = lootOpen and lootWin == p.win
+    local given
+    if sameWindow then
+      local link = GetLootSlotLink and GetLootSlotLink(p.slot)
+      given = clearedSlot ~= nil or not (link and L.ItemIdFromLink(link) == p.item)
+    end
+    if clearedSlot and not given then return end
+    self.pending = nil
+    if given then return Finish(p.item, p.tag, p.cand) end
+    ns.Print(("Couldn't confirm master loot handed %s the item. Nothing recorded: check their bags, then use Award (or trade it and use Award)."):format(p.cand.name))
+    self:Refresh()
+  end
+
+  function award:RefreshRollText()
+    local idx = self.sel
+    local roll = idx and Rolls.For(Tag(idx))
+    local cur = Rolls.current
+    local rollingThis = cur and cur.open and idx ~= nil and cur.tag == Tag(idx)
+    if rollingThis then
+      self.rollText:SetText(("%d rolls, %ds left"):format(cur.n, Rolls.SecondsLeft()))
+    elseif cur and cur.open then
+      self.rollText:SetText(UI.Dim("Rolling for another item", 0.6))
+    elseif roll then
+      self.rollText:SetText(UI.Dim(("%d rolls, closed"):format(roll.n), 0.6))
+    else
+      self.rollText:SetText(UI.Dim(("/roll %d main spec, %d off spec, %ds"):format(Rolls.MS, Rolls.OS, Rolls.Length()), 0.6))
+    end
+    self.rollBtn:SetText(rollingThis and "Stop now" or "Start roll")
+    self.rollBtn:SetSelected(rollingThis)
+    self.cancelBtn:SetShown(roll ~= nil)
+  end
 
   function award:Refresh()
     local ar, ag, ab = T.Accent()
     -- left: dropped items
     local rows = {}
-    for _, id in ipairs(self.drops) do
+    for i, id in ipairs(self.drops) do
       local prio = L.ItemPriorities(id)
       local top = prio[1] and (" " .. UI.Dim(ns.ShortName(prio[1].key or prio[1].name), 0.5)) or ""
       local label = L.ItemText(id, 16)
-      if self.awarded[id] then label = label .. "  " .. UI.Dim("> " .. ns.ShortName(self.awarded[id]), 0.5)
+      local roll = Rolls.For(Tag(i))
+      if self.awarded[Tag(i)] then label = label .. "  " .. UI.Dim("> " .. self.awarded[Tag(i)], 0.5)
+      elseif roll and roll.open then label = label .. "  " .. UI.Colorize("rolling", ar, ag, ab)
       else label = label .. top end
-      if id == self.selectedItem then label = UI.Colorize("> ", ar, ag, ab) .. label end
+      if i == self.sel then label = UI.Colorize("> ", ar, ag, ab) .. label end
       rows[#rows + 1] = {
         cols = { label },
         tooltip = function(tt) ItemTooltip(tt, id) end,
-        onClick = function() self.selectedItem, self.selectedCand = id, nil; self:Refresh() end,
+        onClick = function() self.sel, self.selectedCand, self.confirm = i, nil, nil; self:Refresh() end,
       }
     end
     self.items:SetItems(rows, "No epic items")
 
-    -- right: candidates for the selected item
+    -- right: candidates for the selected drop
     local cands = {}
-    local id = self.selectedItem
-    if id then
-      local prio, wish = L.ItemPriorities(id)
-      local raid = RaidKeys()
-      local inRaid = next(raid) ~= nil
-      local listed = {}
-      local function Add(row, kind)
-        local key = row.key
-        if key then listed[key] = true end
-        local attended, total = ns.Events.AttendanceStats(key or "", 30)
-        local isSel = self.selectedCand and self.selectedCand.key == key and key ~= nil
-        local nameText = key and UI.NameCell(key, (ns.roster[key] or {}).class, raid[key] or ns.IsOnline(key))
-          or UI.Dim(row.name .. " (not in guild)", 0.45)
-        if isSel then nameText = UI.Colorize("> ", ar, ag, ab) .. nameText end
-        if inRaid and key and not raid[key] then nameText = nameText .. UI.Dim("  not in raid", 0.35) end
+    local idx = self.sel
+    local item = idx and self.drops[idx]
+    local roll = idx and Rolls.For(Tag(idx))
+    if item then
+      local prio, wish = L.ItemPriorities(item)
+      local grp = Rolls.Group()
+      local inGroup = grp.n > 0
+      local pug = IsPug()
+      -- each guild member's best list entry (prio before wishlist)
+      local listOf = {}
+      for _, r in ipairs(prio) do if r.key and not listOf[r.key] then listOf[r.key] = r end end
+      for _, r in ipairs(wish) do if r.key and not listOf[r.key] then listOf[r.key] = r end end
+      local seen = {}
+      -- c = { id (group member), key (guild member), name, class, roll, row (list entry),
+      --       gone (rolled, then left the group: id is kept only to tell them apart) }
+      local function Add(c)
+        local k = c.id or c.key
+        if not k or seen[k] then return end
+        seen[k] = true
+        if c.id and c.key then seen[c.key] = true end
+        local listRow = (c.key and listOf[c.key]) or nil
+        local nameText
+        if c.key then
+          nameText = UI.NameCell(c.key, (ns.roster[c.key] or {}).class, (c.id ~= nil and not c.gone) or ns.IsOnline(c.key))
+        elseif c.id then
+          local cr, cg, cb = ns.ClassColor(c.class)
+          nameText = UI.Colorize(c.name, cr, cg, cb) .. UI.Dim("  not in guild", 0.35)
+        else
+          nameText = UI.Dim(c.name .. " (not in guild)", 0.45)
+        end
+        local selKey = self.selectedCand and (self.selectedCand.id or self.selectedCand.key)
+        if selKey == k then
+          nameText = UI.Colorize("> ", ar, ag, ab) .. nameText
+          self.selectedCand.gone = c.gone -- (back in the group after leaving, or left since)
+        end
+        if inGroup and ((c.key and not c.id) or c.gone) then nameText = nameText .. UI.Dim("  not in raid", 0.35) end
+        local s = c.key and Stats(c.key)
         cands[#cands + 1] = {
-          cols = { nameText, kind == "other" and UI.Dim("-", 0.3) or ListTag(row),
-                   total > 0 and (math.floor(attended / total * 100 + 0.5) .. "%") or UI.Dim("-", 0.3),
-                   key and tostring(L.CountReceived(key, 30)) or "",
-                   (key and L.Received(id, key)) and UI.Colorize("yes", 0.9, 0.5, 0.45) or "" },
-          tooltip = key and function(tt)
-            tt:AddLine(ns.ShortName(key), ns.ClassColor((ns.roster[key] or {}).class))
-            if total > 0 then tt:AddLine(("Attended %d of last %d raid nights"):format(attended, total), 0.8, 0.8, 0.8) end
-            tt:AddLine(("%d items in the last 30 days"):format(L.CountReceived(key, 30)), 0.8, 0.8, 0.8)
-          end or nil,
+          cols = { nameText, RollText(c.roll), ListTag(listRow),
+                   (s and s.total > 0) and (math.floor(s.attended / s.total * 100 + 0.5) .. "%") or UI.Dim("-", 0.3),
+                   s and tostring(s.loot) or "",
+                   (c.key and L.Received(item, c.key)) and UI.Colorize("yes", 0.9, 0.5, 0.45) or "" },
+          tooltip = function(tt)
+            tt:AddLine(c.name, ns.ClassColor(c.class or (c.key and (ns.roster[c.key] or {}).class)))
+            if not c.key then tt:AddLine("Not in the guild: an award isn't kept in loot history", 0.8, 0.8, 0.8)
+            elseif pug then tt:AddLine(PugLabel() .. " an award isn't kept in loot history", 0.8, 0.8, 0.8) end
+            if c.gone then tt:AddLine("Left the group after rolling: can be awarded, not given through master loot", 0.8, 0.8, 0.8) end
+            local r = c.roll
+            if r then
+              tt:AddLine(("Rolled %d (%d-%d)"):format(r.roll, r.low, r.high), 0.8, 0.8, 0.8)
+              if r.again then tt:AddLine(("Rolled %d more times; only the first counts"):format(r.again), 0.95, 0.45, 0.4) end
+              if r.tier == Rolls.TIER_OTHER then tt:AddLine("Not a /roll 100 or /roll 99", 0.95, 0.45, 0.4) end
+            end
+            if s and s.total > 0 then tt:AddLine(("Attended %d of last %d raid nights"):format(s.attended, s.total), 0.8, 0.8, 0.8) end
+            if s then tt:AddLine(("%d items in the last 30 days"):format(s.loot), 0.8, 0.8, 0.8) end
+          end,
           onClick = function()
-            if key then self.selectedCand = { key = key, type = row.type, order = row.order }; self:Refresh() end
+            self.selectedCand = { id = c.id, key = c.key, name = c.name, gone = c.gone,
+                                  type = listRow and listRow.type, order = listRow and listRow.order }
+            self.confirm = nil
+            self:Refresh()
           end,
         }
       end
-      for _, r in ipairs(prio) do Add(r, "prio") end
-      for _, r in ipairs(wish) do if not (r.key and listed[r.key]) then Add(r, "wish") end end
+      local function Member(m) return { id = m.id, key = m.key, name = m.name, class = m.class } end
+      -- rolls first (in their order), then prio, wishlist and everyone else in the group
+      for _, r in ipairs(Rolls.Sorted(roll)) do
+        local m = grp.members[r.id]
+        -- (someone who left keeps their id only so they're listed once)
+        local c = m and Member(m) or { id = r.id, key = r.key, name = r.name, gone = true }
+        c.roll = r
+        Add(c)
+      end
+      local function Listed(r)
+        if not r.key then return Add({ name = r.name }) end
+        local m = Rolls.MemberByKey(r.key)
+        Add(m and Member(m) or { key = r.key, name = ns.ShortName(r.key) })
+      end
+      for _, r in ipairs(prio) do Listed(r) end
+      for _, r in ipairs(wish) do Listed(r) end
       local others = {}
-      for key in pairs(raid) do if not listed[key] then others[#others + 1] = key end end
-      table.sort(others)
-      for _, key in ipairs(others) do Add({ key = key, name = key }, "other") end
+      for _, m in pairs(grp.members) do if not seen[m.id] then others[#others + 1] = m end end
+      table.sort(others, function(a, b) return a.name < b.name end)
+      for _, m in ipairs(others) do Add(Member(m)) end
     end
-    self.cands:SetItems(cands, id and "Nobody has this on a list, and you're not in a raid" or "Pick an item on the left")
-    local sel = self.selectedCand
-    self.btn:SetSelected(sel ~= nil)
-    self.btn:SetText(sel and ("Award to " .. ns.ShortName(sel.key)) or "Award")
-    self.note:SetText(L.settings().lootAnnounce and "Awarding records it in loot history and announces it in raid chat. Trade or master loot the item as usual."
-      or "Awarding records it in loot history. Trade or master loot the item as usual.")
+    self.cands:SetItems(cands, item and "Nobody has this on a list, and you're not in a group" or "Pick an item on the left")
+
+    self:RefreshRollText()
+
+    local c = self.selectedCand
+    local mode = self:Mode()
+    local confirming = c and self.confirm and self.confirm.idx == idx and self.confirm.id == (c.id or c.key)
+    self.btn:SetSelected(c ~= nil and not self.pending)
+    if self.pending then self.btn:SetText("Handing over...")
+    elseif not c then self.btn:SetText("Award")
+    elseif confirming and mode == "give" and self.confirm.kind == "give" then self.btn:SetText("Click again: give to " .. c.name)
+    elseif mode == "give" then self.btn:SetText("Give to " .. c.name)
+    elseif confirming and self.confirm.kind == "again" then self.btn:SetText("Click again: award again")
+    elseif idx and self.awarded[Tag(idx)] then self.btn:SetText("Award again to " .. c.name)
+    else self.btn:SetText("Award to " .. c.name) end
+    local said = ns.Option("lootAnnounce") and " and announces it" or ""
+    if IsPug() then
+      if mode == "give" then
+        self.note:SetText(PugLabel() .. " giving hands the item over through master loot" .. said .. ", but it isn't kept in loot history.")
+      else
+        self.note:SetText(PugLabel() .. " awards aren't kept in loot history. Awarding only marks the winner here" .. said .. ".")
+      end
+    elseif mode == "give" then
+      self.note:SetText("Giving hands the item over through master loot, then records it in loot history" .. said .. ".")
+    else
+      self.note:SetText("Awarding records it in loot history" .. said .. ". Trade or master loot the item as usual.")
+    end
   end
 end
 
-function L.OpenAward(itemIDs)
+-- fromLoot: opened from a loot window we're master looter of, so the item can be handed over
+function L.OpenAward(itemIDs, fromLoot)
   if not P.CanEdit("loot") then return ns.Print("Only officers can award loot.") end
   if not award then BuildAward() end
   -- who got what is only kept when the same drops are opened again shortly
   -- after (looting the same corpse twice); a new drop starts clean, so last
   -- week's winner of the same item isn't shown
-  local same = award.drops and #award.drops == #itemIDs and GetTime() - (award.openedAt or 0) < 600
-  if same then
-    for i, id in ipairs(itemIDs) do if award.drops[i] ~= id then same = false break end end
+  -- The same corpse looted again shortly after (all of its drops, or what's
+  -- left of them) keeps each drop's roll and winner; anything else starts
+  -- clean, so last week's winner of the same item isn't shown.
+  local old = award.drops
+  local keep = old and GetTime() - (award.openedAt or 0) < 600
+  if keep then
+    local count = {}
+    for _, id in ipairs(old) do count[id] = (count[id] or 0) + 1 end
+    for _, id in ipairs(itemIDs) do
+      count[id] = (count[id] or 0) - 1
+      if count[id] < 0 then keep = false break end
+    end
   end
-  if not same then award.awarded = {} end
+  if not keep then
+    award.awarded = {}
+    session = session + 1
+    old = nil
+  end
+  -- the old drops' tags by item: ones not given yet first (a given item has left
+  -- the loot window), then the given ones (awarded but traded later)
+  local free = {}
+  for i, id in ipairs(old or {}) do
+    local t = award.tags[i]
+    free[id] = free[id] or { open = {}, given = {} }
+    table.insert(award.awarded[t] and free[id].given or free[id].open, t)
+  end
+  local tags = {}
+  for i, id in ipairs(itemIDs) do
+    local f = free[id]
+    tags[i] = f and (table.remove(f.open, 1) or table.remove(f.given, 1))
+    if not tags[i] then
+      tagSeq = tagSeq + 1
+      tags[i] = session .. ":" .. tagSeq
+    end
+  end
+  award.tags = tags
   award.drops = itemIDs
+  award.fromLoot = fromLoot and true or false
   award.openedAt = GetTime()
-  award.selectedItem = itemIDs[1]
-  award.selectedCand = nil
+  award.sel = 1
+  award.selectedCand, award.confirm, award.pending, award.stats = nil, nil, nil, nil
+  Rolls.Invalidate()
+  -- pug or guild group: decided now (also when reopened for the same or new
+  -- drops) and kept while the window stays open; outside a group, checked live
+  if (IsInRaid and IsInRaid()) or (IsInGroup and IsInGroup()) then
+    award.pug = not L.IsGuildGroup()
+  else
+    award.pug = nil
+  end
   award:Show()
   award:Refresh()
 end
 
 ns.RegisterEvent("LOOT_OPENED", function()
-  if not P.CanEdit("loot") or not (IsInRaid and IsInRaid()) then return end
+  -- (which loot window this is: a hand-over only counts in its own)
+  if not lootOpen then lootWin = lootWin + 1 end
+  lootOpen = true
+  if not P.CanEdit("loot") or not (IsInGroup and IsInGroup()) then return end
   local instanceType = GetInstanceInfo and select(2, GetInstanceInfo())
   local ids = {}
   for slot = 1, (GetNumLootItems and GetNumLootItems()) or 0 do
@@ -208,10 +480,26 @@ ns.RegisterEvent("LOOT_OPENED", function()
       end
     end
   end
-  if #ids > 0 then L.OpenAward(ids) end
+  -- the window only opens by itself for the master looter, and only if they want it
+  if #ids > 0 and ns.Option("awardWindow") and L.IsMasterLooter() then L.OpenAward(ids, true) end
 end)
 
-ns.On("LOOT_CHANGED", function() if award and award:IsShown() then award:Refresh() end end)
+ns.RegisterEvent("LOOT_SLOT_CLEARED", function(slot)
+  if award and award.pending then award:CheckGiven(slot) end
+end)
+ns.RegisterEvent("LOOT_CLOSED", function()
+  lootOpen = false
+  if not award then return end
+  award.fromLoot = false -- (a confirm in progress stays, so its second click is caught, see Click)
+  -- a hand-over still waiting for the game: can't be confirmed any more
+  if award.pending then award:CheckGiven() end
+  if award:IsShown() then award:Refresh() end
+end)
+ns.On("ROLLS_CHANGED", function() if award and award:IsShown() then award:Refresh() end end)
+ns.On("ROLLS_TICK", function() if award and award:IsShown() then award:RefreshRollText() end end)
+ns.On("LOOT_CHANGED", function()
+  if award and award:IsShown() then award.stats = nil; award:Refresh() end
+end)
 
 ------------------------------------------------------------------------
 -- Priorities page

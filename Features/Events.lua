@@ -243,7 +243,10 @@ function E.AttendanceStats(key, days)
   return attended, total
 end
 
--- Resolve a raid roster name to a guild roster key (handles realm/last-name formats)
+-- A name an officer typed (or imported) -> a guild roster key, forgivingly:
+-- realm and last-name formats, and a unique first name. Too loose for names
+-- from the group or from other players (a pug sharing a guild member's
+-- first name would match): use ns.Rolls.Lookup for those.
 function E.ResolveKey(name)
   if not name then return nil end
   local key = ns.NormalizeName(name)
@@ -298,9 +301,13 @@ local function RecordTick()
   a.by = ns.MyKey()
   local n = (GetNumGroupMembers and GetNumGroupMembers()) or 0
   for i = 1, n do
-    -- offline raiders still hold their spot but aren't attending
+    -- offline raiders still hold their spot but aren't attending. Raiders
+    -- count as guild members only on an exact match (Rolls.lua R.Group: by
+    -- GUID or full name), so a pug sharing a guild member's name never earns
+    -- them attendance.
     local name = NameIfOnline(GetRaidRosterInfo(i))
-    local key = name and E.ResolveKey(name)
+    local m = name and ns.Rolls and ns.Rolls.Lookup(name)
+    local key = m and m.key
     if key then a.min[key] = (a.min[key] or 0) + 1 end
   end
   a.ts = ns.Now()

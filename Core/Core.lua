@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.26.2"
+ns.VERSION = "0.27.0"
 -- The sync format. Clients only take records, hashes and deltas from members
 -- on the same protocol; any future change to the wire format bumps it.
 ns.PROTOCOL = 2
@@ -524,6 +524,9 @@ ns.OPTION_DEFAULTS = {
   homeFirst = true,          -- open on Home first each session
   readyCheckAuto = true,     -- run the ready check page's check on every ready check
   lootAnnounce = true,       -- officers: announce awarded loot in raid chat
+  awardWindow = true,        -- officers: open the award window when we're the master looter
+  lootTooltip = true,        -- prio list, wishlist and who has it in item tooltips
+  rollPopup = true,          -- a popup with roll buttons when an officer starts a roll
   alertBankRequest = true,   -- officers: chat message when someone requests a guild bank item
   homeTips = true,           -- "Getting started" card on Home while there's setup left to do
   sharePlayed = false,       -- share your /played time with the guild (Settings > Privacy)

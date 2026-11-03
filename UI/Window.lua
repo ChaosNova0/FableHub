@@ -1081,6 +1081,7 @@ end
 
 function ns.ResetWindow()
   FableHubDB.settings.window = nil
+  FableHubDB.settings.rollPopupPos = nil -- (the roll popup goes back to its default spot)
   if main then
     main:ClearAllPoints()
     main:SetPoint("CENTER")
