@@ -196,9 +196,12 @@ function D.Report()
   add("Character (roster): %s%s", tostring(ns.MyKey()), ns._myKeyConfirmed and "" or " (not matched to the roster yet)")
   local P = ns.Plans
   local myRank = P and P.RankIndex(ns.MyKey())
+  -- (judged by the real rank; the report gets pasted in Discord, so it never
+  -- says whether this is a developer account)
+  local offRank = P and P.OfficerRank()
   add("Guild: %s  -  rank %s, officer ranks: up to %s%s", tostring(ns.GuildKey()), tostring(myRank),
-    tostring(P and P.OfficerRank()), (P and P.CanEdit()) and "  (you're an officer)" or "")
-  if ns.IsDeveloper and ns.IsDeveloper() then add("Developer account: yes (test officer mode %s)", P and P.TestMode() and "ON" or "off") end
+    tostring(offRank), (myRank and offRank and myRank <= offRank) and "  (you're an officer)" or "")
+  if P and P.TestMode() then add("Test officer mode: ON") end
   add("")
 
   add("[Guild]")

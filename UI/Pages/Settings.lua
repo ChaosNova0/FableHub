@@ -175,7 +175,7 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
     SlashCmdList.FABLEHUB("reset")
     panel:Refresh()
   end)
-  -- Developer tools: only built on the developer's Battle.net account
+  -- Developer tools: only built on a developer account (ns.IsDeveloper)
   if ns.IsDeveloper() then
     R:Header("Developer")
     R:Toggle("Test officer mode (this computer only)", function() return P.TestMode() end, function(v)

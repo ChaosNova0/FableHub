@@ -8,3 +8,6 @@ Thumbs.db
 
 # test suite: kept on this PC, not on GitHub
 tests/
+
+# kept here for safe keeping, never shipped
+FableHubicon.png

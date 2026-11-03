@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.26.1"
+ns.VERSION = "0.26.2"
 -- The sync format. Clients only take records, hashes and deltas from members
 -- on the same protocol; any future change to the wire format bumps it.
 ns.PROTOCOL = 2
@@ -174,22 +174,15 @@ function ns.ClassColor(classFile)
   return 0.8, 0.8, 0.8
 end
 
--- The developer's Battle.net account. Test officer mode only exists there.
--- Stored as a hash so the BattleTag itself isn't written in the code.
--- (Addons can read their own player's BattleTag, never anyone else's.)
-ns.DEV_TAG_HASH = 0
-function ns.TagHash(tag)
-  local h = 5381
-  for i = 1, #tag do h = (h * 33 + tag:lower():byte(i)) % 4294967296 end
-  return h
-end
+-- Developer account: test officer mode, debug messages and /dump FableHub.
+-- Off unless this account's own saved data turns it on (nothing in the code
+-- says who the developer is). To turn it on, once per account:
+--   /run FableHubDB.settings.developer = true   then /reload
+-- It only changes things on this computer: other players' FableHub judge
+-- everyone by their real guild rank.
 function ns.IsDeveloper()
-  if not ns.DEV_TAG_HASH then return false end
-  if ns._isDeveloper ~= nil then return ns._isDeveloper end
-  local ok, _, tag = pcall(function() return BNGetInfo() end)
-  if not ok or type(tag) ~= "string" or tag == "" then return false end -- not connected yet: ask again later
-  ns._isDeveloper = ns.TagHash(tag) == ns.DEV_TAG_HASH
-  return ns._isDeveloper
+  local db = FableHubDB
+  return type(db) == "table" and type(db.settings) == "table" and db.settings.developer == true
 end
 
 function ns.Now()
@@ -613,9 +606,8 @@ ns.RegisterEvent("PLAYER_LOGIN", function()
   ns.RequestRoster()
   -- refresh the roster every 60s so online status stays current
   C_Timer.NewTicker(60, function() if IsInGuild() then ns.RequestRoster() end end)
-  -- global handle for /dump FableHub, on the developer's account only
-  -- (Battle.net info can take a few seconds after login to arrive)
-  C_Timer.After(10, function() if ns.IsDeveloper() then FableHub = ns end end)
+  -- global handle for /dump FableHub, on a developer account only
+  if ns.IsDeveloper() then FableHub = ns end
   ns.Fire("LOGIN")
 end)
 
