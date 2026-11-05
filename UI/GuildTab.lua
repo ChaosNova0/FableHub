@@ -21,13 +21,33 @@ local Update
 -- the window's own side tabs, top to bottom
 local SIDE_TABS = { "ChatTab", "RosterTab", "GuildBenefitsTab", "GuildInfoTab" }
 
+-- Update from the game's own frame scripts: errors go to /fhub bug, never
+-- into the Guild window's scripts
+local function SafeUpdate()
+  local ok, err = pcall(Update)
+  if not ok then ns.ReportError("GuildTab: " .. tostring(err)) end
+end
+
 -- follow a side tab as it comes and goes
 local watched = {}
 local function Watch(t)
   if watched[t] or not t.HookScript then return end
   watched[t] = true
-  t:HookScript("OnShow", function() Update() end)
-  t:HookScript("OnHide", function() Update() end)
+  t:HookScript("OnShow", SafeUpdate)
+  t:HookScript("OnHide", SafeUpdate)
+end
+
+-- is f placed relative to target (directly or through other frames)? Such a
+-- frame, e.g. another addon's tab hung under ours, can't be anchored to.
+local function DependsOn(f, target, depth)
+  depth = depth or 0
+  if f == target then return true end
+  if depth > 10 or not f.GetNumPoints then return false end
+  for i = 1, (f:GetNumPoints() or 0) do
+    local _, rel = f:GetPoint(i)
+    if type(rel) == "table" and DependsOn(rel, target, depth + 1) then return true end
+  end
+  return false
 end
 
 -- every side tab: the known ones, plus any other small button hanging off the
@@ -41,7 +61,9 @@ local function SideTabs()
   local right = CommunitiesFrame.GetRight and CommunitiesFrame:GetRight()
   if right and CommunitiesFrame.GetChildren then
     for _, c in ipairs({ CommunitiesFrame:GetChildren() }) do
-      if c ~= tab and not seen[c] and c.GetRect then
+      -- (never another addon's secure button: hanging under it would lock our
+      -- tab in combat too)
+      if c ~= tab and not seen[c] and c.GetRect and not (c.IsProtected and c:IsProtected()) then
         local l, _, w, h = c:GetRect()
         if l and w and h and math.abs(l - right) <= 12 and w <= 64 and h <= 64 then
           list[#list + 1] = c; seen[c] = true
@@ -58,7 +80,7 @@ local function LastShownTab(list)
   local last, lowest
   for _, t in ipairs(list) do
     Watch(t)
-    if t:IsShown() then
+    if t:IsShown() and not DependsOn(t, tab) then
       local b = t.GetBottom and t:GetBottom()
       if not b then
         if not lowest then last = t end
@@ -86,8 +108,10 @@ function Update()
   local last = LastShownTab(list)
   local want = IsInGuild() and ns.Option("guildTab") and (last or #list == 0) and true or false
   tab:ClearAllPoints()
-  if last then
-    tab:SetPoint("TOP", last, "BOTTOM", 0, Gap())
+  if last and pcall(tab.SetPoint, tab, "TOP", last, "BOTTOM", 0, Gap()) then
+    -- (placed under the lowest side tab)
+  elseif last and CommunitiesFrame.GuildInfoTab and pcall(tab.SetPoint, tab, "TOP", CommunitiesFrame.GuildInfoTab, "BOTTOM", 0, Gap()) then
+    -- (couldn't go there: under Guild Info instead)
   else
     -- (no side tabs on this client: where the first one would be)
     tab:SetPoint("TOPLEFT", CommunitiesFrame, "TOPRIGHT", 0, -36)
@@ -152,8 +176,8 @@ local function Create()
   -- window, or another addon, may still be adding or moving tabs). Update
   -- also follows each side tab it finds as it comes and goes.
   CommunitiesFrame:HookScript("OnShow", function()
-    Update()
-    C_Timer.After(0, Update)
+    SafeUpdate()
+    C_Timer.After(0, SafeUpdate)
   end)
   Update()
 end
