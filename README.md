@@ -7,7 +7,7 @@
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 
 - **[Player guide](GUIDE.md)**: a walkthrough of every page
-- **[Installation](#installation)** · **[Commands](#commands)** · **[For the Guild Master](#setting-up-for-the-guild-master)** · **[How sharing works](#how-sharing-works)**
+- **[Installation](#installation)** · **[Commands](#commands)** · **[For the Guild Master](#setting-up-for-the-guild-master)** · **[How sharing works](GUIDE.md#how-sharing-works)**
 
 ---
 
