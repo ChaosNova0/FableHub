@@ -363,7 +363,12 @@ end
 -- saved data (g.whisperNames).
 ------------------------------------------------------------------------
 local badForm = {}       -- [key] = { [form] = true } (this session)
-local recentWhisper = {} -- [form] = { key = key, t = GetTime() }
+local recentWhisper = {} -- [Loose(form)] = { key = key, form = form, t = GetTime() }
+
+-- The game doesn't always print the name back the way we sent it: a whisper to
+-- "Eco-SomeRealm" can come back as "No player named 'Eco SomeRealm' ...". So
+-- spellings are matched ignoring spaces, hyphens and capitals.
+local function Loose(name) return (tostring(name):gsub("[%s%-]", ""):lower()) end
 
 function ns.WhisperCandidates(key)
   local list, seen = {}, {}
@@ -416,7 +421,7 @@ function ns.WhisperWorked(key, form)
 end
 
 function ns.NoteWhisper(form, key)
-  recentWhisper[form] = { key = key, t = GetTime() }
+  recentWhisper[Loose(form)] = { key = key, form = form, t = GetTime() }
 end
 
 -- "No player named '%s' is currently playing." as a pattern (any language)
@@ -431,8 +436,8 @@ local function NotFoundName(msg)
 end
 local function OurFailedWhisper(msg)
   local name = NotFoundName(msg)
-  local w = name and recentWhisper[name]
-  if w and GetTime() - w.t < 5 then return name, w end
+  local w = name and recentWhisper[Loose(name)]
+  if w and GetTime() - w.t < 5 then return w.form, w end
 end
 
 ns.RegisterEvent("CHAT_MSG_SYSTEM", function(msg)
