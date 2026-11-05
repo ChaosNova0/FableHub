@@ -1,6 +1,6 @@
 # FableHub
 
-**Guild management for WoW: Forever, built for the guild *Fable*.**
+**Guild management for WoW: Forever, built for the guild *Fable OCE*.**
 
 ![Version](https://img.shields.io/badge/version-0.27.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
