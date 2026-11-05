@@ -2,7 +2,7 @@
 
 **Guild management for WoW: Forever, built for the guild *Fable OCE*.**
 
-![Version](https://img.shields.io/badge/version-0.27.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-0.28.0-c9a26b) ![Client](https://img.shields.io/badge/client-WoW%3A%20Forever-555) ![Status](https://img.shields.io/badge/status-launch%20build-green) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 FableHub puts the guild's organisation in one in-game window: who's who, who can craft what, raid nights and sign-ups, raid groups, ready checks, loot priorities and the guild bank. Everything travels between guildmates over the game's hidden addon channel. There's no website, bot or account, and nothing leaves the game.
 

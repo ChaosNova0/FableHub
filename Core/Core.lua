@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.27.0"
+ns.VERSION = "0.28.0"
 -- The sync format. Clients only take records, hashes and deltas from members
 -- on the same protocol; any future change to the wire format bumps it.
 ns.PROTOCOL = 2
