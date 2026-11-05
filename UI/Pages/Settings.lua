@@ -95,7 +95,7 @@ ns.RegisterPanel("settings", "Settings", "Interface\\Icons\\Trade_Engineering", 
   L:Header("General")
   L:Toggle("Show the minimap button", function() return not (FableHubDB.settings.minimap and FableHubDB.settings.minimap.hide) end,
     function() if ns.ToggleMinimapButton then ns.ToggleMinimapButton() end end)
-  L:Option("FableHub tab on the Social window", "socialTab", "Adds a FableHub tab after Friends, Who, Guild and Raid on the game's Social window (O). It only shows while you're in a guild.")
+  L:Option("FableHub tab on the Guild window", "guildTab", "Adds a FableHub tab under the tabs down the right-hand side of the game's Guild & Communities window. It only shows while you're in a guild.")
   L:Option("Open on Home each session", "homeFirst", "Otherwise FableHub reopens on the page you last used.")
   L:Option("Getting started tips on Home", "homeTips", "A card on Home listing setup still to do, such as professions whose recipes haven't been shared yet.")
 

@@ -10,7 +10,7 @@ Guild roster and profession tracker for WoW: Forever.
    If it says "Out of date", tick **Load out of date AddOns**.
 
 ## Use
-- `/fhub`, the minimap button, or the **FableHub** tab on the game's Social window (O, after Guild and Raid) opens the window. Drag the title bar to move it and the bottom-right corner to resize it. If the sidebar doesn't fit, scroll it with the mouse wheel. If a table is wider than the window, a thin bar appears under it: drag it, or hold Shift and use the mouse wheel, to scroll sideways. Pages adjust to the window's width: toolbar buttons wrap onto another row, search boxes shrink, side lists narrow, and Settings puts its second column underneath (scroll with the mouse wheel).
+- `/fhub`, the minimap button, or the **FableHub** tab on the game's Guild & Communities window (under its tabs down the right-hand side) opens the window. Drag the title bar to move it and the bottom-right corner to resize it. If the sidebar doesn't fit, scroll it with the mouse wheel. If a table is wider than the window, a thin bar appears under it: drag it, or hold Shift and use the mouse wheel, to scroll sideways. Pages adjust to the window's width: toolbar buttons wrap onto another row, search boxes shrink, side lists narrow, and Settings puts its second column underneath (scroll with the mouse wheel).
 - **Home** (where FableHub opens each session; after that it reopens where you left off):
   - **Raid banner**: on a raid day (from midnight, or 12 hours before) until the raid ends, a glowing banner across the top shows the raid and when it starts, with:
     - **Your sign-up** (status, character, role; Change opens Raid nights). Not signed up yet? Accept / Late / Tentative / Decline right there.
@@ -103,7 +103,7 @@ Guild roster and profession tracker for WoW: Forever.
   - **Gold** balance at the top, and a **Log** view with the recent deposits, withdrawals and moves the game keeps for each tab, plus the gold log.
   - **Requests** (its own page): right-click any item on Contents to ask for it (how many, optional note). Officers get a chat message (can be turned off in Settings) and right-click a request to mark it handed over or decline it; you get a message when yours is handled, and can cancel it. Finished requests clear after 7 days. Officers also see open bank requests on Home (the Bank requests card), where they can right-click to hand over or decline.
 - **Settings** (the cog next to the close button; click it again to go back): every option in one place, saved for your whole account.
-  - General: minimap button, FableHub tab on the Social window, open on Home each session, window opacity, reset window.
+  - General: minimap button, FableHub tab on the Guild window, open on Home each session, window opacity, reset window.
   - Alerts in chat (each can be turned off): raid nights you haven't signed up for, new craft requests you can make, open requests at login, your request claimed or done, and the request count on the minimap button.
   - Raids: run the ready check automatically.
   - Loot: prio lists in item tooltips, and roll popups (both on by default; turn them off if you use another loot addon such as Gargul).

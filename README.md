@@ -48,7 +48,7 @@ The page FableHub opens on.
 - Members can **request items**; officers hand them over or decline.
 
 ### Settings
-Everything in one place (the cog in the title bar): alerts, minimap button, the FableHub tab on the Social window, window opacity, sharing your time played (**Privacy**, off by default), officer ranks, and **feature permissions** (below).
+Everything in one place (the cog in the title bar): alerts, minimap button, the FableHub tab on the Guild & Communities window, window opacity, sharing your time played (**Privacy**, off by default), officer ranks, and **feature permissions** (below).
 
 Officers also get a **Change log**: the last 20 officer actions their FableHub has seen (permission and officer rank changes, raid nights, attendance fixes, That's My BIS imports, loot priority edits, removed loot, announcements, alt links set by hand, and bank requests handed over or declined), with who did it and when. It needs no extra addon messages, and changes made while you were offline show up once catch-up brings them in.
 
