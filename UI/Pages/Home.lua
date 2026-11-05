@@ -641,7 +641,7 @@ ns.RegisterPanel("home", "Home", "Interface\\Icons\\INV_Misc_Note_01", function(
     end
 
     -- MOTD
-    local m = GetGuildRosterMOTD and GetGuildRosterMOTD() or ""
+    local m = ns.HomeMOTD()
     motdText:SetText(m ~= "" and m or UI.Dim("No message of the day set.", 0.45))
     motd.want = HEAD + math.max(14, motdText:GetStringHeight() or 14) + PAD + 2
 
@@ -852,4 +852,18 @@ end)
 
 ns.On("ANNOUNCE_CHANGED", function() if ns.UI.QueueRefresh then ns.UI.QueueRefresh() end end)
 ns.On("ACTIVITY_CHANGED", function() if ns.UI.QueueRefresh then ns.UI.QueueRefresh() end end)
-ns.RegisterEvent("GUILD_MOTD", function() if ns.UI.QueueRefresh then ns.UI.QueueRefresh() end end)
+-- The game blocks reading the guild message of the day in combat, so keep the
+-- last one we read and show that until combat ends.
+local motdCache, motdStale = "", false
+function ns.HomeMOTD()
+  if not GetGuildRosterMOTD then return "" end
+  if InCombatLockdown and InCombatLockdown() then motdStale = true return motdCache end
+  motdCache, motdStale = GetGuildRosterMOTD() or "", false
+  return motdCache
+end
+local function QueueRefresh() if ns.UI.QueueRefresh then ns.UI.QueueRefresh() end end
+ns.RegisterEvent("GUILD_MOTD", function()
+  if InCombatLockdown and InCombatLockdown() then motdStale = true end
+  QueueRefresh()
+end)
+ns.RegisterEvent("PLAYER_REGEN_ENABLED", function() if motdStale then QueueRefresh() end end)
