@@ -1,4 +1,4 @@
-# FableHub 0.28.2
+# FableHub 0.28.3
 
 ### Install
 1. Close the game, then delete your old `Interface\AddOns\FableHub` folder.
@@ -8,4 +8,4 @@
 It syncs with 0.27.x and 0.28.x as normal.
 
 ### Fixed
-- Chat could fill up with "No player named '...' is currently playing." over and over. FableHub was trying to reach a guildmate who'd logged off, and the game spelled their name back differently from how FableHub sent it, so FableHub didn't recognise the message. It now hides that line and stops retrying that spelling.
+- Having FableHub's Home page open during a fight could cause a "FableHub tried to call the protected function" error. The game doesn't let addons read the guild message of the day in combat, so Home now shows the last one it read and catches up once the fight is over.
