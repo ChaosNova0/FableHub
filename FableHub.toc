@@ -54,4 +54,5 @@ UI\Pages\GuildBank.lua
 UI\Pages\Settings.lua
 UI\Pages\Permissions.lua
 UI\Minimap.lua
+UI\SocialTab.lua
 Core\Diag.lua
