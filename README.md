@@ -87,7 +87,7 @@ FableHub is useful once a few guildmates have it, and more so once an officer do
 | `/fhub ping Name` | Test which spelling of a guildmate's name FableHub can whisper |
 | `/fhub reset` | Clear stored guild data |
 
-`/fablehub` works as well.
+`/fh` and `/fablehub` work as well.
 
 ---
 

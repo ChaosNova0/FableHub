@@ -620,6 +620,7 @@ end)
 ------------------------------------------------------------------------
 SLASH_FABLEHUB1 = "/fhub"
 SLASH_FABLEHUB2 = "/fablehub"
+SLASH_FABLEHUB3 = "/fh"
 ns.SlashHandlers = {} -- extra /fhub commands from other files: [word] = function(rest)
 SlashCmdList.FABLEHUB = function(msg)
   msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")

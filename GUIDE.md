@@ -10,7 +10,7 @@ Guild roster and profession tracker for WoW: Forever.
    If it says "Out of date", tick **Load out of date AddOns**.
 
 ## Use
-- `/fhub`, the minimap button, or the **FableHub** tab on the game's Guild & Communities window (under its tabs down the right-hand side) opens the window. Drag the title bar to move it and the bottom-right corner to resize it. If the sidebar doesn't fit, scroll it with the mouse wheel. If a table is wider than the window, a thin bar appears under it: drag it, or hold Shift and use the mouse wheel, to scroll sideways. Pages adjust to the window's width: toolbar buttons wrap onto another row, search boxes shrink, side lists narrow, and Settings puts its second column underneath (scroll with the mouse wheel).
+- `/fhub` (or `/fh`), the minimap button, or the **FableHub** tab on the game's Guild & Communities window (under its tabs down the right-hand side) opens the window. Drag the title bar to move it and the bottom-right corner to resize it. If the sidebar doesn't fit, scroll it with the mouse wheel. If a table is wider than the window, a thin bar appears under it: drag it, or hold Shift and use the mouse wheel, to scroll sideways. Pages adjust to the window's width: toolbar buttons wrap onto another row, search boxes shrink, side lists narrow, and Settings puts its second column underneath (scroll with the mouse wheel).
 - **Home** (where FableHub opens each session; after that it reopens where you left off):
   - **Raid banner**: on a raid day (from midnight, or 12 hours before) until the raid ends, a glowing banner across the top shows the raid and when it starts, with:
     - **Your sign-up** (status, character, role; Change opens Raid nights). Not signed up yet? Accept / Late / Tentative / Decline right there.
