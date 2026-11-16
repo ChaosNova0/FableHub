@@ -96,7 +96,7 @@ local function Build(panel)
     { title = "Signed up as", width = 150 },
     { title = "Answer", width = 110 },
     { title = "Character", flex = true },
-  }, 22)
+  }, 22, { id = "raidhelper" })
   list:SetPoint("TOPLEFT", 0, -132)
   list:SetPoint("BOTTOMRIGHT", 0, 40)
   list.sortable = false

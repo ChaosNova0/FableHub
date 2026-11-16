@@ -82,10 +82,53 @@ end
 -- Sortable virtual list
 --   columns = { { title, width | flex = true, justify, defaultAsc, bar } }
 --   list:SetItems({ { cols = {...}, sort = {...}, bars = { [c] = 0..1 }, tooltip, onClick } })
+--
+-- Resizable columns: drag the edge after a column title to resize that column.
+-- Stretch (flex) columns share whatever room is left, so:
+--   * an edge with no stretch column before it resizes its column, and the
+--     stretch columns (or a sideways scrollbar) make up the difference
+--   * an edge after a stretch column, or after a fixed column with a stretch
+--     column before it, trades space with the fixed columns that follow it
+--   * a fixed column sat between two stretch columns resizes on its own and
+--     both stretch columns make up the difference
+-- The edge follows the mouse until a column reaches its smallest width (24,
+-- or 90 for a stretch column). An edge between two stretch columns, or after
+-- the last column when a stretch column comes before it, can't be dragged.
+-- Double-click an edge to put it back; right-click a title to reset the table.
+-- Lists with opts.id remember the widths you set:
+--   FableHubDB.settings.colWidths[id] = { n = column count, [i] = width }
+-- (ignored if the table's column count changes)
 ------------------------------------------------------------------------
 local GAP = 10
+local MIN_COL = 24
+local MIN_FLEX = 90
+local MAX_COL = 2000 -- widest a column can be dragged (and still load back)
+
+local function LoadWidths(id, columns)
+  local s = FableHubDB and FableHubDB.settings
+  local t = id and s and type(s.colWidths) == "table" and s.colWidths[id]
+  local out = {}
+  if type(t) ~= "table" or t.n ~= #columns then return out end
+  for i, col in ipairs(columns) do
+    local w = t[i]
+    if not col.flex and type(w) == "number" and w >= math.min(MIN_COL, col.width or 80) and w <= MAX_COL then
+      out[i] = math.floor(w + 0.5)
+    end
+  end
+  return out
+end
+
+local function SaveWidths(id, n, custom)
+  local s = FableHubDB and FableHubDB.settings
+  if not (id and s) then return end
+  if type(s.colWidths) ~= "table" then s.colWidths = {} end
+  local t, any = { n = n }, false
+  for i = 1, n do if custom[i] then t[i] = custom[i]; any = true end end
+  s.colWidths[id] = any and t or nil
+end
 
 -- opts.noHeader: no column titles (compact lists on the Home page)
+-- opts.id: remember dragged column widths under this name
 function UI.CreateList(parent, columns, rowHeight, opts)
   rowHeight = rowHeight or 22
   opts = opts or {}
@@ -93,6 +136,23 @@ function UI.CreateList(parent, columns, rowHeight, opts)
   list.columns, list.items, list.offset = columns, {}, 0
   list.sortCol, list.sortAsc = 1, true
   list.rows, list.headers, list.widths, list.lefts = {}, {}, {}, {}
+  list.handles = {}
+  list.custom = nil -- widths you've dragged, loaded on first layout (saved data is ready by then)
+
+  -- current width of a fixed column (nil for the stretch column)
+  local function ColW(i)
+    local col = columns[i]
+    if col.flex then return nil end
+    return (list.custom and list.custom[i]) or col.width or 80
+  end
+  local function MinOf(i) return math.min(MIN_COL, columns[i].width or 80) end
+  -- how many stretch columns sit at or before column i (and in total)
+  local function FlexUpTo(i)
+    local n = 0
+    for j = 1, i do if columns[j].flex then n = n + 1 end end
+    return n
+  end
+  local FLEX_TOTAL = FlexUpTo(#columns)
 
   -- header and rows sit in a horizontal scroll frame: when the window is too
   -- narrow for the columns, the table scrolls sideways instead of spilling out
@@ -119,12 +179,20 @@ function UI.CreateList(parent, columns, rowHeight, opts)
   for i, col in ipairs(columns) do
     local h = CreateFrame("Button", nil, header)
     h:SetHeight(20)
+    h:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    -- hidden titles mustn't catch clicks meant for the first row
+    if opts.noHeader then h:EnableMouse(false) end
     local fs = T.Text(h, 11, T.section)
     fs:SetAllPoints()
     fs:SetJustifyH(col.justify or "LEFT")
     h.text = fs
     list.headers[i] = h
-    h:SetScript("OnClick", function()
+    h:SetScript("OnClick", function(_, button)
+      if button == "RightButton" then
+        if #list.handles == 0 then return end
+        T.Menu(h, { { text = "Reset column widths", onClick = function() list:ResetWidths() end } }, 170)
+        return
+      end
       if list.sortable == false then return end
       if list.sortCol == i then list.sortAsc = not list.sortAsc
       else list.sortCol, list.sortAsc = i, (col.defaultAsc ~= false) end
@@ -133,6 +201,141 @@ function UI.CreateList(parent, columns, rowHeight, opts)
     end)
     h:SetScript("OnEnter", function() fs:SetTextColor(1, 1, 1, 0.8) end)
     h:SetScript("OnLeave", function() list:Update() end)
+  end
+
+  -- which columns the edge after column i changes:
+  --   own   the column left of the edge (nil when that's a stretch column)
+  --   after fixed columns right of the edge that give or take the space
+  --   rate  how far the columns must change for the edge to move one pixel
+  --         (more than 1 when several stretch columns share the change)
+  -- Returns nil when the edge can't be dragged.
+  local function EdgeTargets(i)
+    local k = FlexUpTo(i)
+    local own = (not columns[i].flex) and i or nil
+    if k == 0 then return own, {}, 1 end
+    local after = {}
+    for j = i + 1, #columns do
+      if columns[j].flex then break end
+      after[#after + 1] = j
+    end
+    if own then
+      if #after > 0 then return own, after, 1 end
+      if k < FLEX_TOTAL then return own, after, FLEX_TOTAL / (FLEX_TOTAL - k) end
+      return nil
+    end
+    if #after == 0 then return nil end
+    return nil, after, FLEX_TOTAL / k
+  end
+
+  local function CursorX()
+    local x = GetCursorPosition()
+    local scale = list:GetEffectiveScale() or 1
+    return (x or 0) / (scale > 0 and scale or 1)
+  end
+
+  local function Relayout()
+    list:FitWidth()
+    list:Layout()
+  end
+
+  if not opts.noHeader then
+    for i = 1, #columns do
+      local own, after, rate = EdgeTargets(i)
+      if own or after then
+        local targets = {}
+        if own then targets[1] = own end
+        for _, c in ipairs(after) do targets[#targets + 1] = c end
+        local edge = CreateFrame("Button", nil, header)
+        edge:SetSize(10, 20)
+        edge:SetFrameLevel(header:GetFrameLevel() + 5)
+        local mark = edge:CreateTexture(nil, "OVERLAY")
+        mark:SetPoint("TOP", 0, -3)
+        mark:SetPoint("BOTTOM", 0, 3)
+        mark:SetWidth(1)
+        mark:SetColorTexture(1, 1, 1, 0.12)
+        local function Paint(hot)
+          if hot then local r, g, b = T.Accent(); mark:SetColorTexture(r, g, b, 0.9)
+          else mark:SetColorTexture(1, 1, 1, 0.12) end
+        end
+        edge:SetScript("OnEnter", function() Paint(true) end)
+        edge:SetScript("OnLeave", function(self) if not self.dragging then Paint(false) end end)
+        local function StopDrag(self)
+          if not self.dragging then return end
+          self.dragging = nil
+          self:SetScript("OnUpdate", nil)
+          -- a real drag isn't the first half of a double-click
+          if self.moved then self.lastDown = nil end
+          Paint(UI.IsMouseOver(self))
+          SaveWidths(opts.id, #columns, list.custom)
+        end
+        edge:SetScript("OnMouseDown", function(self, button)
+          if button ~= "LeftButton" or not list.custom then return end
+          local now = GetTime()
+          if self.lastDown and now - self.lastDown < 0.35 then
+            -- double-click: put this edge's columns back to normal
+            self.lastDown = nil
+            for _, c in ipairs(targets) do list.custom[c] = nil end
+            SaveWidths(opts.id, #columns, list.custom)
+            Relayout()
+            return
+          end
+          self.lastDown, self.moved = now, false
+          self.dragging, self.startX, self.start = true, CursorX(), {}
+          for _, c in ipairs(targets) do self.start[c] = ColW(c) end
+          -- how far the stretch columns can shrink before they hit their smallest width
+          local flexRoom = 0
+          for c, col in ipairs(columns) do
+            if col.flex then flexRoom = math.max(0, ((list.widths[c] or MIN_FLEX) - MIN_FLEX) * FLEX_TOTAL); break end
+          end
+          local lastD
+          self:SetScript("OnUpdate", function()
+            -- the button came up while the game wasn't listening (alt-tab)
+            if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then return StopDrag(self) end
+            local d = math.floor(CursorX() - self.startX + 0.5)
+            if d == lastD then return end
+            lastD = d
+            if math.abs(d) >= 3 then self.moved = true end
+            local D = math.floor(d * rate + 0.5)
+            local st = self.start
+            if #after == 0 then
+              -- nothing to trade with: this column alone grows or shrinks
+              if rate > 1 then D = math.min(D, flexRoom) end
+              list.custom[own] = math.min(MAX_COL, math.max(MinOf(own), st[own] + D))
+            elseif D >= 0 then
+              -- dragging right: take the space from the next columns in turn
+              local left, took = D, 0
+              for _, c in ipairs(after) do
+                local take = math.min(left, math.max(0, st[c] - MinOf(c)))
+                list.custom[c] = st[c] - take
+                left, took = left - take, took + take
+              end
+              if own then list.custom[own] = math.min(MAX_COL, st[own] + took) end
+            else
+              -- dragging left: this column (or the stretch columns) gives the
+              -- space to the next column
+              local give = -D
+              if own then
+                give = math.min(give, math.max(0, st[own] - MinOf(own)))
+                list.custom[own] = st[own] - give
+              else
+                give = math.min(give, flexRoom)
+              end
+              for n, c in ipairs(after) do list.custom[c] = math.min(MAX_COL, st[c] + (n == 1 and give or 0)) end
+            end
+            Relayout()
+          end)
+        end)
+        edge:SetScript("OnMouseUp", StopDrag)
+        edge:SetScript("OnHide", StopDrag)
+        edge.col = i
+        list.handles[#list.handles + 1] = edge
+      end
+    end
+  end
+  function list:ResetWidths()
+    self.custom = {}
+    SaveWidths(opts.id, #columns, self.custom)
+    Relayout()
   end
 
   local body = CreateFrame("Frame", nil, inner)
@@ -202,11 +405,10 @@ function UI.CreateList(parent, columns, rowHeight, opts)
   end)
 
   -- smallest width the columns need (flex columns get at least MIN_FLEX)
-  local MIN_FLEX = 90
   function list:MinWidth()
     local fixed, flex = 0, 0
-    for _, col in ipairs(columns) do
-      if col.flex then flex = flex + 1 else fixed = fixed + (col.width or 80) end
+    for i, col in ipairs(columns) do
+      if col.flex then flex = flex + 1 else fixed = fixed + ColW(i) end
     end
     return 8 + fixed + flex * MIN_FLEX + GAP * (#columns - 1) + 4
   end
@@ -284,16 +486,17 @@ function UI.CreateList(parent, columns, rowHeight, opts)
 
   -- work out column positions from the current width
   function list:ComputeColumns()
+    if not self.custom and FableHubDB then self.custom = LoadWidths(opts.id, columns) end
     local width = (body:GetWidth() or 0)
     local fixed, flexCount = 0, 0
-    for _, col in ipairs(columns) do
-      if col.flex then flexCount = flexCount + 1 else fixed = fixed + (col.width or 80) end
+    for i, col in ipairs(columns) do
+      if col.flex then flexCount = flexCount + 1 else fixed = fixed + ColW(i) end
     end
     local avail = width - 8 - GAP * (#columns - 1)
     local flexW = flexCount > 0 and math.max(MIN_FLEX, (avail - fixed) / flexCount) or 0
     local x = 8
     for i, col in ipairs(columns) do
-      local w = col.flex and flexW or (col.width or 80)
+      local w = col.flex and flexW or ColW(i)
       self.widths[i], self.lefts[i] = w, x
       x = x + w + GAP
     end
@@ -323,6 +526,11 @@ function UI.CreateList(parent, columns, rowHeight, opts)
       h:ClearAllPoints()
       h:SetPoint("LEFT", header, "LEFT", self.lefts[i], 0)
       h:SetWidth(self.widths[i])
+    end
+    for _, edge in ipairs(self.handles) do
+      local c = edge.col
+      edge:ClearAllPoints()
+      edge:SetPoint("CENTER", header, "LEFT", self.lefts[c] + self.widths[c] + GAP / 2, 0)
     end
     for _, row in ipairs(self.rows) do self:PlaceRow(row) end
     local n = math.max(1, math.floor((body:GetHeight() or 0) / rowHeight))

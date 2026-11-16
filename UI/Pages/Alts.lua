@@ -34,7 +34,7 @@ ns.RegisterPanel("alts", "Alts", nil, function(panel)
     { title = "Rank", width = 110 },
     { title = "Professions", flex = true },
     { title = "Last seen", width = 90, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "alts" })
   list:SetPoint("TOPLEFT", 0, -34)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
   list.sortable = false

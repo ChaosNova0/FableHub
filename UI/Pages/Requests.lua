@@ -38,7 +38,7 @@ ns.RegisterPanel("requests", "Craft Requests", nil, function(panel)
     { title = "Status", width = 140 },
     { title = "Crafters", width = 54, justify = "RIGHT", defaultAsc = false },
     { title = "Posted", width = 62, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "requests" })
   list:SetPoint("TOPLEFT", 0, -32)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
   local bar = UI.Toolbar(panel)
@@ -66,7 +66,7 @@ ns.RegisterPanel("requests", "Craft Requests", nil, function(panel)
   local input = T.Input(dlg, 360, "Item or recipe name, or shift-click an item")
   input:SetPoint("TOPLEFT", 0, -50)
   UI.AcceptLinks(input)
-  local sug = UI.CreateList(dlg, { { title = "Crafted in the guild", flex = true }, { title = "Crafters", width = 54, justify = "RIGHT" } }, 24)
+  local sug = UI.CreateList(dlg, { { title = "Crafted in the guild", flex = true }, { title = "Crafters", width = 54, justify = "RIGHT" } }, 24, { id = "requests.suggest" })
   sug:SetPoint("TOPLEFT", 0, -78)
   sug:SetSize(360, 22 + 7 * 24)
   sug.sortable = false

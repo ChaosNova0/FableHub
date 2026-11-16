@@ -123,7 +123,7 @@ local function BuildAward()
   award.rollText = T.Text(award, 12, 0.6)
   award.rollText:SetPoint("RIGHT", award.cancelBtn, "LEFT", -10, 0)
 
-  award.items = UI.CreateList(award, { { title = "Drops", flex = true } }, 26)
+  award.items = UI.CreateList(award, { { title = "Drops", flex = true } }, 26, { id = "loot.award.items" })
   award.items:SetPoint("TOPLEFT", 12, -42)
   award.items:SetPoint("BOTTOMLEFT", 12, 44)
   award.items:SetWidth(220)
@@ -136,7 +136,7 @@ local function BuildAward()
     { title = "Attend.", width = 50, justify = "RIGHT", defaultAsc = false },
     { title = "Loot 30d", width = 56, justify = "RIGHT" },
     { title = "Has it", width = 44, justify = "CENTER" },
-  }, 24)
+  }, 24, { id = "loot.award.cands" })
   award.cands:SetPoint("TOPLEFT", 244, -42)
   award.cands:SetPoint("BOTTOMRIGHT", -12, 44)
   award.cands.sortable = false
@@ -528,7 +528,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
     { title = "Prio", flex = true },
     { title = "Wish", width = 40, justify = "RIGHT", defaultAsc = false },
     { title = "Has it", width = 110 },
-  }, 24)
+  }, 24, { id = "loot.items" })
   itemList:SetPoint("TOPLEFT", 0, -50)
   itemList:SetPoint("BOTTOMRIGHT", 0, 0)
 
@@ -541,7 +541,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
     { title = "Prio", width = 32, justify = "RIGHT", defaultAsc = false },
     { title = "Wish", width = 32, justify = "RIGHT", defaultAsc = false },
     { title = "Has", width = 30, justify = "RIGHT", defaultAsc = false },
-  }, 24)
+  }, 24, { id = "loot.people" })
   people:SetPoint("TOPLEFT", 0, 0)
   people:SetPoint("BOTTOMLEFT", 0, 0)
   people:SetWidth(250)
@@ -565,7 +565,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
     { title = "Prio", width = 44, justify = "CENTER" },
     { title = "Wishlist", width = 60, justify = "CENTER" },
     { title = "Has it", width = 70, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "loot.pane" })
   paneList:SetPoint("TOPLEFT", 0, -48)
   paneList:SetPoint("BOTTOMRIGHT", 0, 0)
   paneList.sortCol = 2
@@ -680,7 +680,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
   local itemInput = T.Input(add, 330, "Item name, item ID, or shift-click an item")
   itemInput:SetPoint("TOPLEFT", 0, -50)
   UI.AcceptLinks(itemInput)
-  local itemSug = UI.CreateList(add, { { title = "Matches", flex = true } }, 24)
+  local itemSug = UI.CreateList(add, { { title = "Matches", flex = true } }, 24, { id = "loot.add.items" })
   itemSug:SetPoint("TOPLEFT", 0, -78)
   itemSug:SetSize(330, 22 + 6 * 24)
   itemSug.sortable = false
@@ -700,7 +700,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
     { title = "Member", flex = true },
     { title = "List", width = 60 },
     { title = "From", width = 90 },
-  }, 22)
+  }, 22, { id = "loot.add.entries" })
   entries:SetPoint("TOPLEFT", 0, -128)
   entries:SetPoint("BOTTOMLEFT", 0, 0)
   entries:SetWidth(330)
@@ -711,7 +711,7 @@ ns.RegisterPanel("priorities", "Priorities", nil, function(panel)
   local lMember = T.Text(add, 11, T.section); lMember:SetPoint("TOPLEFT", RX, -34); lMember:SetText("GUILD MEMBER")
   local memberInput = T.Input(add, 220, "Start typing a name")
   memberInput:SetPoint("TOPLEFT", RX, -50)
-  local memberSug = UI.CreateList(add, { { title = "Members", flex = true }, { title = "Lvl", width = 26, justify = "RIGHT" } }, 22)
+  local memberSug = UI.CreateList(add, { { title = "Members", flex = true }, { title = "Lvl", width = 26, justify = "RIGHT" } }, 22, { id = "loot.add.members" })
   memberSug:SetPoint("TOPLEFT", RX, -78)
   memberSug:SetSize(220, 20 + 6 * 22)
   memberSug.sortable = false
@@ -1123,7 +1123,7 @@ ns.RegisterPanel("loothistory", "Loot history", nil, function(panel)
     { title = "Player", width = 150 },
     { title = "Raid", width = 110 },
     { title = "Prio", width = 36, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "loothistory" })
   list.sortCol, list.sortAsc = 1, false
   list:SetPoint("TOPLEFT", 0, -34)
   list:SetPoint("BOTTOMRIGHT", 0, 0)

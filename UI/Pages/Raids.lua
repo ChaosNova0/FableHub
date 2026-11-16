@@ -310,7 +310,7 @@ ns.RegisterPanel("raids", "Raid plans", nil, function(panel)
     { title = "Member", flex = true },
     { title = "Role", width = 22, justify = "CENTER" },
     { title = "Lvl", width = 22, justify = "RIGHT", defaultAsc = false },
-  }, 22)
+  }, 22, { id = "raids.pool" })
   poolList:SetPoint("TOPLEFT", 0, -54)
   poolList:SetPoint("BOTTOMRIGHT", 0, 30)
   -- dropping a planned member back on the pool takes them out of the plan

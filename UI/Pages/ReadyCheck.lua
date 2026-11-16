@@ -35,7 +35,7 @@ ns.RegisterPanel("readycheck", "Ready check", nil, function(panel)
   cols[#cols + 1] = { title = "Enchants", width = 66, justify = "CENTER" }
   cols[#cols + 1] = { title = "Missing", width = 150 }
 
-  local list = UI.CreateList(panel, cols, 24)
+  local list = UI.CreateList(panel, cols, 24, { id = "readycheck" })
   list:SetPoint("TOPLEFT", 0, -34)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
   local bar = UI.Toolbar(panel)

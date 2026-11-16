@@ -82,7 +82,7 @@ ns.RegisterPanel("roster", "Members", nil, function(panel)
     { title = "Note", flex = true },
     { title = "Attend.", width = 54, justify = "RIGHT", defaultAsc = false },
     { title = "Last seen", width = 80, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "roster" })
   list:SetPoint("TOPLEFT", 0, -34)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
 

@@ -143,7 +143,7 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
   local left = UI.CreateList(panel, {
     { title = "Profession", flex = true },
     { title = "#", width = 24, justify = "RIGHT", defaultAsc = false },
-  }, 26)
+  }, 26, { id = "professions.list" })
   left:SetPoint("TOPLEFT", 0, -34)
   left:SetPoint("BOTTOMLEFT", 0, 56)
   left:SetWidth(210)
@@ -225,7 +225,7 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     { title = "Character / recipe", flex = true },
     { title = "Profession", width = 300 },
     { title = "Also crafted by", width = 170 },
-  }, 24)
+  }, 24, { id = "professions.recipes" })
   recipeList.sortable = false
   local expanded = {}
   recipeList:SetPoint("TOPLEFT", 232, -34)
@@ -235,7 +235,7 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     { title = "Cooldown", flex = true },
     { title = "Ready now", width = 190 },
     { title = "Cooling down", width = 250 },
-  }, 24)
+  }, 24, { id = "professions.cooldowns" })
   cdList.sortable = false
   cdList:SetPoint("TOPLEFT", 232, -34)
   cdList:SetPoint("BOTTOMRIGHT", 0, 0)
@@ -247,7 +247,7 @@ ns.RegisterPanel("professions", "Recipes", nil, function(panel)
     { title = "Recipes", width = 56, justify = "RIGHT", defaultAsc = false },
     { title = "Cooldowns", width = 120, defaultAsc = false },
     { title = "Updated", width = 64, justify = "RIGHT" },
-  }, 24)
+  }, 24, { id = "professions.crafters" })
   crafterList:SetPoint("TOPLEFT", 232, -34)
   crafterList:SetPoint("BOTTOMRIGHT", 0, 0)
   crafterList.sortCol, crafterList.sortAsc = 3, false

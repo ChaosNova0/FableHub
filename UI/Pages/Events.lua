@@ -44,7 +44,7 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
     { title = "When", width = 104 },
     { title = "Raid night", flex = true },
     { title = "You", width = 26, justify = "CENTER" },
-  }, 24)
+  }, 24, { id = "events" })
   list:SetPoint("TOPLEFT", 0, -34)
   list:SetPoint("BOTTOMLEFT", 0, 0)
   list:SetWidth(270)
@@ -184,14 +184,14 @@ ns.RegisterPanel("events", "Raid nights", nil, function(panel)
     { title = "Status", width = 70 },
     { title = "Note", flex = true },
     { title = "When", width = 60, justify = "RIGHT" },
-  }, 22)
+  }, 22, { id = "events.responses" })
   local attendanceList = UI.CreateList(detail, {
     { title = "Name", width = 150 },
     { title = "Signed", width = 70 },
     { title = "Attended", width = 80 },
     { title = "Time in raid", width = 80, justify = "RIGHT", defaultAsc = false },
     { title = "Note", flex = true },
-  }, 22)
+  }, 22, { id = "events.attendance" })
   attendanceList.sortCol = 3
   responses.sortCol = 3
 

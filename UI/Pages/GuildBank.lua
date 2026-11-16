@@ -49,7 +49,7 @@ ns.RegisterPanel("guildbank", "Contents", nil, function(panel)
 
   -- left: tab list
   local tabList = UI.CreateList(panel, { { title = "Tab", flex = true }, { title = "Items", width = 40, justify = "RIGHT" } },
-    24, nil)
+    24, { id = "guildbank.tabs" })
   tabList:SetPoint("TOPLEFT", 0, -50)
   tabList:SetPoint("BOTTOMLEFT", 0, 0)
   tabList:SetWidth(170)
@@ -177,7 +177,7 @@ ns.RegisterPanel("guildbank", "Contents", nil, function(panel)
   local list = UI.CreateList(right, {
     { title = "", flex = true }, { title = "", width = 90 }, { title = "", width = 110 },
     { title = "", width = 60, justify = "RIGHT" }, { title = "", width = 100 }, { title = "", width = 90, justify = "RIGHT" },
-  }, 22)
+  }, 22, { id = "guildbank.items" })
   list:SetPoint("TOPLEFT", 0, 0)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
 
@@ -339,7 +339,7 @@ ns.RegisterPanel("bankrequests", "Requests", nil, function(panel)
   local list = UI.CreateList(panel, {
     { title = "Item", flex = true }, { title = "Asked", width = 90 }, { title = "By", width = 110 },
     { title = "In bank", width = 60, justify = "RIGHT" }, { title = "Note", width = 140 }, { title = "Status", width = 90, justify = "RIGHT" },
-  }, 22)
+  }, 22, { id = "bankrequests" })
   list:SetPoint("TOPLEFT", 0, -26)
   list:SetPoint("BOTTOMRIGHT", 0, 0)
   list.sortable = false

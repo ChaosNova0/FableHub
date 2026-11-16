@@ -183,7 +183,7 @@ ns.RegisterPanel("writs", "Craftsman's Writs", nil, function(panel)
     { title = "Rep", width = 34, justify = "RIGHT" },
     { title = "Deliver to", width = 150 },
     { title = "Can craft", width = 150, defaultAsc = false },
-  }, 24)
+  }, 24, { id = "writs" })
   -- a starting top edge so the list has a size from the start (the toolbar
   -- moves it under the filters and shopping list once it's laid out)
   list:SetPoint("TOPLEFT", 0, -100)
