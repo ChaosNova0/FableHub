@@ -531,6 +531,8 @@ ns.OPTION_DEFAULTS = {
   alertBankRequest = true,   -- officers: chat message when someone requests a guild bank item
   homeTips = true,           -- "Getting started" card on Home while there's setup left to do
   sharePlayed = false,       -- share your /played time with the guild (Settings > Privacy)
+  writsMineOnly = false,     -- Craftsman's Writs page: only the writs you hold
+  writsGuildOnly = false,    -- Craftsman's Writs page: only items a guildmate can craft
 }
 function ns.Option(key)
   local s = FableHubDB and FableHubDB.settings

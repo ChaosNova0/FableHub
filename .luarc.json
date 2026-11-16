@@ -4,6 +4,13 @@
   "workspace.ignoreDir": [".git", "Libs", "tests"],
   "diagnostics.globals": [
     "FABLEHUB_TEST_EPOCH",
+    "AuctionHouseFrame",
+    "AuctionHouseFrameDisplayMode",
+    "GetItemCount",
+    "GetNumQuestLeaderBoards",
+    "GetNumQuestLogEntries",
+    "GetQuestLogLeaderBoard",
+    "GetQuestLogTitle",
     "FABLEHUB_TEST_SHA256",
     "BOOKTYPE_SPELL",
     "GetAddOnInfo",

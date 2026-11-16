@@ -161,18 +161,22 @@ ns.RegisterPanel("requests", "Craft Requests", nil, function(panel)
     end
   end)
 
-  local function OpenNew(recipe, prof, item)
-    st = { recipe = recipe, prof = prof, item = item, qty = 1, mats = "all", text = "" }
-    input:SetText(""); noteBox:SetText(""); dStatus:SetText("")
+  -- opts (optional): qty and note to fill in (e.g. from the Craftsman's Writs page)
+  local function OpenNew(recipe, prof, item, opts)
+    opts = type(opts) == "table" and opts or {}
+    local qty = math.max(1, math.min(99, math.floor(tonumber(opts.qty) or 1)))
+    st = { recipe = recipe, prof = prof, item = item, qty = qty, mats = "all", text = "" }
+    input:SetText(""); dStatus:SetText("")
+    noteBox:SetText(type(opts.note) == "string" and opts.note:sub(1, 80) or "")
     st.recipe, st.prof, st.item = recipe, prof, item
     dlg:Show()
     dlg:Refresh()
     if not recipe then input:SetFocus() end
   end
   newBtn:SetScript("OnClick", function() OpenNew() end)
-  R.OpenNew = function(recipe, prof, item)
+  R.OpenNew = function(recipe, prof, item, opts)
     if ns.UI.ShowPanel then ns.UI.ShowPanel("requests") end
-    OpenNew(recipe, prof, item)
+    OpenNew(recipe, prof, item, opts)
   end
   R.dialogState = function() return st end -- for tests
 

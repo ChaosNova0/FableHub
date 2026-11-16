@@ -126,7 +126,7 @@ local function CooldownBits(rec, skillLine, size)
 end
 
 ------------------------------------------------------------------------
-ns.RegisterNavGroup("profgroup", "Professions", "Interface\\Icons\\Trade_BlackSmithing", { "professions", "requests", "campgroup" })
+ns.RegisterNavGroup("profgroup", "Professions", "Interface\\Icons\\Trade_BlackSmithing", { "professions", "requests", "writs" })
 
 ns.RegisterPanel("professions", "Recipes", nil, function(panel)
   local T = ns.Theme

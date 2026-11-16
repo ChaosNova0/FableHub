@@ -27,7 +27,7 @@ The page FableHub opens on.
 - **Recipes**: every guildmate's recipes, searchable by recipe or crafted item, in rarity colours, highest item level first. Filter by gear slot, armour type and stats (all of them, or any).
 - **Cooldowns**: transmutes, Mooncloth and the Salt Shaker next to each character, ready or with the time left. **Cooldown crafts** shows whose are ready across the guild.
 - **Craft Requests**: ask the guild for an item; members who know the recipe are told. Claim, mark done, cancel.
-- **Camping**: a camp guide (every profession's camp items and campfires) and a camp planner.
+- **Craftsman's Writs**: all 150 Forever writs, by profession and level, with the item each one asks for, who to hand them in to and which guildmates can craft each item. Writs you hold are marked, with a shopping list and a Search AH button at the auction house.
 
 ### Raids
 - **Raid nights**: one-off or weekly, in everyone's own time zone, with sign-ups (Accepted, Late, Tentative, Declined), roles and notes. Attendance is recorded automatically. Officers can import sign-ups from **Raid-Helper** (Discord).

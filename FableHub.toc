@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: |cffdca77fFable|rHub
-## Notes: Guild roster, alts, ready checks, guild bank, professions, raid planner, sign-ups, loot and camping for WoW: Forever. Type /fhub to open.
+## Notes: Guild roster, alts, ready checks, guild bank, professions, raid planner, sign-ups, loot and Craftsman's Writs for WoW: Forever. Type /fhub to open.
 ## Author: FableHub
 ## Version: 0.28.4
 ## SavedVariables: FableHubDB
@@ -20,7 +20,6 @@ Features\Events.lua
 Features\RaidHelper.lua
 Features\Loot.lua
 Features\Rolls.lua
-Features\Camping.lua
 Features\Requests.lua
 Features\Announce.lua
 Features\Activity.lua
@@ -33,6 +32,8 @@ Data\Cooldowns.lua
 Features\Cooldowns.lua
 Features\Played.lua
 Features\RecipeFacts.lua
+Data\Writs.lua
+Features\Writs.lua
 Features\ChangeLog.lua
 Core\Cleanup.lua
 UI\Theme.lua
@@ -48,8 +49,8 @@ UI\Pages\Events.lua
 UI\Pages\RaidHelper.lua
 UI\Pages\ReadyCheck.lua
 UI\Pages\Loot.lua
-UI\Pages\Camping.lua
 UI\Pages\Requests.lua
+UI\Pages\Writs.lua
 UI\Pages\GuildBank.lua
 UI\Pages\Settings.lua
 UI\Pages\Permissions.lua
