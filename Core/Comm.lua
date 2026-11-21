@@ -427,7 +427,8 @@ end
 -- "No player named '%s' is currently playing." as a pattern (any language)
 local notFoundPattern
 local function NotFoundName(msg)
-  if type(msg) ~= "string" then return nil end
+  -- (the game can hide a chat line from addons: a "secret" value we can't read)
+  if type(msg) ~= "string" or (issecretvalue and issecretvalue(msg)) then return nil end
   if not notFoundPattern then
     local fmt = ERR_CHAT_PLAYER_NOT_FOUND_S or "No player named '%s' is currently playing."
     notFoundPattern = "^" .. fmt:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)") .. "$"
@@ -689,16 +690,28 @@ ns.AmRelayFor = AmRelayFor
 ------------------------------------------------------------------------
 -- Trust checks
 ------------------------------------------------------------------------
--- Who really sent a message, as a guild roster key. The part after "-" in the
--- sender's name is either a realm (ours / the guild's) or, on Forever, the last
--- name ("First-Lastname"). Tried in order:
---   exact     the name with no tail or our realm as the tail, or the last name
---             rebuilt as "First Lastname", is exactly a roster key
---   full      a unique case-insensitive match of that full name; or, when the
---             tail is neither our realm nor a known last name, the name before
---             it is a roster key (a connected realm)
+-- Who really sent a message, as a guild roster key. Since the game stopped
+-- reporting realm names, senders arrive as the roster spells them ("First
+-- Lastname"), or with Forever's last name in the realm slot ("First-Lastname").
+-- A tail after "-" can also be a realm: one the game reports right now
+-- (ns.IsGameRealm), one saved from before (ns.IsRealmName, should realms come
+-- back), or another one. Keys never hold a realm. Tried in order:
+--   exact     the last name rebuilt as "First Lastname" is exactly a roster
+--             key (even when that last name is also a realm's name); or the
+--             name with no tail, a realm the game reports right now as the
+--             tail, or the realm in that member's own roster name
+--             (ns.IsMemberRealm) is exactly a roster key
+--   full      a realm only saved from before as the tail, and the name is a
+--             roster key (anyone on our old realm may share a guildmate's
+--             name, so whispers don't take it); or a unique case-insensitive
+--             match of that full name
 --   first     the name arrived without a last name: a unique first-name match
 --             ("loose": see LooseSender)
+-- A "First-Tail" whose tail is none of these is someone the roster doesn't
+-- list ("First Tail", perhaps new to the guild): not matched to a guildmate
+-- called "First". A tail with a "-" of its own ("First-Last-Other") isn't one
+-- last name: never rebuilt, so never matched to "First Last" or "First"
+-- (unless the whole tail is one of our realms).
 -- strict (whispers, which anyone on the realm can send): exact matches only, so
 -- "Hunt-Stormrage" never passes as guildmate "Hunt".
 -- Returns key, loose; nil = not in the guild.
@@ -710,14 +723,17 @@ local function FirstName(key)
 end
 local function KnownKey(key) return key ~= nil and (ns.roster[key] ~= nil or key == ns.MyKey()) end
 
--- is `tail` (the part after "-") our realm or the guild's, in any spelling?
+-- is `tail` (the part after "-") empty or one of our realms, in any spelling?
 local function IsOurRealm(tail)
-  local t = tail:gsub("[%s%-']", ""):lower()
-  if t == "" then return true end
-  for _, r in ipairs({ ns.KeyRealm() or "", ns.MyRealm() or "" }) do
-    if r ~= "" and t == r:gsub("[%s%-']", ""):lower() then return true end
-  end
-  return false
+  local t = tail:gsub("[%s%-']", "")
+  return t == "" or ns.IsRealmName(t)
+end
+
+-- ... and good enough for an exact match: empty, a realm the game reports
+-- right now, or the one in roster member `key`'s own name (see above)
+local function IsExactRealm(tail, key)
+  local t = tail:gsub("[%s%-']", "")
+  return t == "" or ns.IsGameRealm(t) or ns.IsMemberRealm(key, tail)
 end
 
 -- the unique roster key whose name (before "-") is `name`, ignoring case
@@ -737,34 +753,37 @@ end
 local function Resolve(sender)
   local base, tail = sender:match("^([^-]+)%-(.*)$")
   base = base or sender
-  local realmTail = not tail or IsOurRealm(tail)
+  -- (a tail with a "-" of its own is never rebuilt as a last name)
+  local oneTail = tail ~= nil and tail ~= "" and not tail:find("-", 1, true) and not base:find(" ", 1, true)
+  -- "First-Lastname" where "First Lastname" is in the roster: theirs, before
+  -- any realm rule (a last name can be spelt like a realm)
+  if oneTail then
+    local key = ns.NormalizeName(base .. " " .. tail)
+    if KnownKey(key) then return key, "exact" end
+  end
+  local exactTail = not tail or IsExactRealm(tail, ns.NormalizeName(base))
+  local realmTail = exactTail or IsOurRealm(tail)
+  -- "First-Last-Other" whose tail isn't one of our realms: someone else
+  if not realmTail and tail:find("-", 1, true) then return nil end
   -- the name as it would be in the roster: "First Lastname" when Forever put
   -- the last name in the realm slot
   local full, rebuilt = base, false
-  if not realmTail and not base:find(" ", 1, true) then full, rebuilt = base .. " " .. tail, true end
+  if not realmTail and oneTail then full, rebuilt = base .. " " .. tail, true end
   local key = ns.NormalizeName(full)
   if KnownKey(key) then
     -- "First Lastname-OtherRealm" is someone on another realm who may share a
-    -- guildmate's name: not exact
-    if realmTail or rebuilt then return key, "exact" end
+    -- guildmate's name, and so is "Name-<a realm only saved from before>":
+    -- not exact
+    if exactTail or rebuilt then return key, "exact" end
     return key, "full"
   end
   key = UniqueName(full)
   if key then return key, "full" end
-  if rebuilt then
-    -- a tail that's neither our realm nor a last name we know: perhaps a
-    -- connected realm's name
-    key = ns.NormalizeName(base)
-    if KnownKey(key) then return key, "full" end
-    key = UniqueName(base)
-    if key then return key, "full" end
-  end
   -- Only when the name arrived without a last name: a full "First Lastname"
   -- that isn't in the roster is someone else (otherwise any player sharing a
   -- guildmate's first name could pass as them)
   if full:find(" ", 1, true) then return nil end
-  -- only a first name: a unique first-name match (roster keys all carry the
-  -- guild's realm, see NormalizeName)
+  -- only a first name: a unique first-name match
   local first, found = FirstName(full), nil
   for k in pairs(ns.roster) do
     if FirstName(k) == first then
@@ -773,6 +792,20 @@ local function Resolve(sender)
     end
   end
   if found then return found, "first" end
+end
+
+-- The key of a sender the roster doesn't list (yet): their name as the
+-- roster would spell it. "First-Lastname" is "First Lastname" unless the
+-- tail is good enough for an exact match (IsExactRealm), so a "Bob Smith"
+-- new to the guild, or a "Bob" from our old realm, is never taken for
+-- guildmate "Bob". A tail with a "-" of its own gives "First Last Other",
+-- never guildmate "First Last".
+local function SenderKey(sender)
+  local base, tail = sender:match("^([^-]+)%-(.*)$")
+  if base and tail ~= "" and not base:find(" ", 1, true) and not IsExactRealm(tail, ns.NormalizeName(base)) then
+    return ns.NormalizeName(base .. " " .. (tail:gsub("%-", " ")))
+  end
+  return ns.NormalizeName(sender)
 end
 
 function ns.ResolveSender(sender, strict)
@@ -1556,6 +1589,8 @@ end
 local function HandleFull(sender, payload)
   local rec = Enc.DecodeRecord(payload)
   if not rec or not ns.TimeOK(rec.ts) then return end
+  -- (a key holding a realm is never a guild key: refused even before the roster loads)
+  if rec.key:find("-", 1, true) then return end
   if rec.key == ns.MyKey() then return OwnCopyCheck(sender, rec) end
   -- only guild members (stops made-up members piling up in everyone's saved data)
   if next(ns.roster) and not ns.roster[rec.key] then return end
@@ -1683,7 +1718,7 @@ local function HandleSummary(sender, payload)
   local officer = IsOfficerSender(sender)
   local useful = {}
   for _, rec in ipairs(list) do
-    if rec.ts > 0 and ns.TimeOK(rec.ts) then
+    if rec.ts > 0 and ns.TimeOK(rec.ts) and not rec.key:find("-", 1, true) then
       if rec.key == me then
         -- a newer "copy" of ours gets corrected, as for F; one of our version
         -- is left alone (a summary leaves out too much to compare)
@@ -1866,7 +1901,7 @@ function ns.OnAddonMessage(prefix, text, channel, sender)
   if channel ~= "GUILD" and channel ~= "WHISPER" then return end
   if ns.Diag then ns.Diag.NoteRecv(sender, channel, prefix) end
   local raw = sender
-  sender = ns.NormalizeName(sender)
+  sender = SenderKey(sender)
   if not sender then return end
   -- whispers can come from anyone on the realm: only guild members count, and
   -- only by their exact name (no first-name guess, or anyone sharing a
@@ -2054,6 +2089,8 @@ function ns.PrintStatus()
   for key in pairs(ns.present) do if ns.IsOnline(key) then online = online + 1 end end
   ns.Print(("v%s | guild: %s | records: %d | partial: %d | FableHub users seen: %d (%d online now) | queued msgs: %d")
     :format(ns.VERSION, ns.GuildKey() or "none", stored, partial, users, online, #sendQueue))
+  local moved = ns.Migrate and ns.Migrate.Status(g) or ""
+  if moved ~= "" then ns.Print("  " .. moved) end
   local rec = ns.MyRecord()
   for _, p in pairs(rec and rec.profs or {}) do
     local n = ns.CountRecipes and ns.CountRecipes(p) or 0

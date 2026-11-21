@@ -10,7 +10,9 @@
 --   1. D (guild): the relays we name, and our bucket sums: character keys
 --      are spread over 16 buckets (Enc.Bucket), and a bucket's sum is the XOR
 --      of the checksums (Hash.lua) of the records we hold in it. In sync, our
---      sums and a relay's are the same.
+--      sums and a relay's are the same. (A key with a "-" in it is never a
+--      guild key, see Core.lua's names section: it's left out of our sums,
+--      lists and answers, whatever we hold.)
 --   2. s (whisper, from each relay): its sums; the first relay named also
 --      lists its version (ts, checksum) of every key in each bucket where its
 --      sum differs from ours. The others' lists would mostly repeat the first
@@ -129,7 +131,8 @@ local function EachHashed(exclude, fn)
   local me = ns.MyKey()
   local haveRoster = next(ns.roster) ~= nil
   for key, rec in pairs(g.members) do
-    if key ~= exclude and (key == me or not haveRoster or ns.roster[key]) then
+    -- (a key with a realm in it is never a guild key: see Core.lua's names section)
+    if key ~= exclude and not key:find("-", 1, true) and (key == me or not haveRoster or ns.roster[key]) then
       if key == me then
         local own = ns.OwnState()
         if own.hash and own.ts == (rec.ts or 0) then fn(key, own.ts, own.hash) end
@@ -233,7 +236,7 @@ local function Candidates()
   local list = {}
   for key in pairs(ns.present) do
     local proto, exact = ns.HelloInfo(key)
-    if key ~= me and proto == ns.PROTOCOL and exact and not ns.LooseSender(key) and ns.IsOnline(key)
+    if key ~= me and not key:find("-", 1, true) and proto == ns.PROTOCOL and exact and not ns.LooseSender(key) and ns.IsOnline(key)
       and (not haveRoster or ns.roster[key]) and not badRelays[key] then
       list[#list + 1] = key
     end
@@ -879,7 +882,8 @@ local function ContestBucket(s, g, voters, b)
   for _, r in ipairs(voters) do
     if s.listed[r][b] then
       for key, e in pairs(s.lists[r]) do
-        if Bucket(key) == b and key ~= me and (not haveRoster or ns.roster[key]) and (not top[key] or e.ts > top[key]) then
+        if Bucket(key) == b and key ~= me and not key:find("-", 1, true) and (not haveRoster or ns.roster[key])
+          and (not top[key] or e.ts > top[key]) then
           top[key] = e.ts
         end
       end
@@ -1026,7 +1030,8 @@ local function PlanOnce(s, g)
   for _, r in ipairs(voters) do
     for key in pairs(s.lists[r]) do
       local b = Bucket(key)
-      if not seen[key] and key ~= me and (not haveRoster or ns.roster[key]) and not blocked[b] and not s.contestedB[b] then
+      if not seen[key] and key ~= me and not key:find("-", 1, true) and (not haveRoster or ns.roster[key])
+        and not blocked[b] and not s.contestedB[b] then
         seen[key] = true
         keys[#keys + 1] = key
       end
@@ -1569,7 +1574,7 @@ local function Pick(req, rs, list, peek)
   local out = {}
   for _, it in ipairs(list) do
     local key = it.key
-    if key ~= req and (not haveRoster or ns.roster[key]) then
+    if key ~= req and not key:find("-", 1, true) and (not haveRoster or ns.roster[key]) then
       local m = key == me and ns.MyRecord() or g.members[key]
       if m and (m.ts or 0) >= it.ts and not Recent(rs.sent, key, m.ts or 0, now) then
         if not peek then

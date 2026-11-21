@@ -1,4 +1,4 @@
-# FableHub 0.30.0
+# FableHub 0.31.0
 
 Guild roster and profession tracker for WoW: Forever.
 
@@ -134,6 +134,7 @@ When you log in after a while, a short summary of everyone arrives first, so the
 Nothing is sent during combat or boss fights.
 Officer data (raid nights, loot, announcements, raid plans, attendance) is only accepted from officers, so someone logging in later receives it once an officer with FableHub is online.
 Addon messages from players outside the guild are ignored, and formatting codes are stripped from anything received.
+FableHub knows guildmates by name only, without a realm, since the game stopped showing realm names. A record whose name still carries a realm is refused, and someone who only shares a guildmate's first name, or a player on your old realm who shares a guildmate's name, can't speak for them. Your guild data saved under the old realm names was moved over once, on your own computer. Only names from your own guild were moved (if a guild of the same name on another realm was saved too, only one was moved: your guild's realm, or the one you visited last), and only copies of guildmates' records that the owner had vouched for; anything left behind comes back from guildmates as usual. Your own characters' records were kept as a backup for 90 days.
 Characters on a connected realm can't be heard on the guild's addon channel, so their FableHub notices and whispers other FableHub users instead. Nothing to set up.
 
 ## Coming from the beta

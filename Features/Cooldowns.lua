@@ -43,19 +43,27 @@ end
 -- Reading your own cooldowns
 ------------------------------------------------------------------------
 -- start, duration; nil when the game couldn't be asked (not the same as 0 = ready)
+-- The game can hide a value from addons (a "secret" value, e.g. in combat);
+-- a hidden cooldown counts as one we couldn't read, so we keep what we had.
+local function Secret(v) return issecretvalue and v ~= nil and issecretvalue(v) end
+
 local function SpellCooldown(id)
   if C_Spell and C_Spell.GetSpellCooldown then
     local info = SafeCall(C_Spell.GetSpellCooldown, id)
-    if type(info) == "table" then return info.startTime or 0, info.duration or 0 end
+    if type(info) == "table" then
+      local start, dur = info.startTime, info.duration
+      if Secret(start) or Secret(dur) then return nil end
+      return start or 0, dur or 0
+    end
   end
   local start, dur = SafeCall(GetSpellCooldown, id)
-  if type(start) ~= "number" then return nil end
+  if Secret(start) or Secret(dur) or type(start) ~= "number" then return nil end
   return start, type(dur) == "number" and dur or 0
 end
 
 local function ItemCooldown(id)
   local start, dur = SafeCall((C_Container and C_Container.GetItemCooldown) or GetItemCooldown, id)
-  if type(start) ~= "number" then return nil end
+  if Secret(start) or Secret(dur) or type(start) ~= "number" then return nil end
   return start, type(dur) == "number" and dur or 0
 end
 
@@ -84,7 +92,7 @@ local function RecipeCooldownLeft(recipeID)
   local T = C_TradeSkillUI
   if not T or type(T.GetRecipeCooldown) ~= "function" then return nil end
   local left, _, charges, maxCharges = SafeCall(T.GetRecipeCooldown, recipeID)
-  if type(left) ~= "number" then return nil end
+  if Secret(left) or Secret(charges) or Secret(maxCharges) or type(left) ~= "number" then return nil end
   -- a cooldown with charges left can be used now
   if type(maxCharges) == "number" and maxCharges > 0 and type(charges) == "number" and charges > 0 then return 0 end
   return math.max(0, left)

@@ -390,25 +390,23 @@ function Enc.DecodeSummaryBatch(text)
 end
 
 ------------------------------------------------------------------------
--- Character keys in sync messages: the guild's realm (ns.KeyRealm) is left
--- off, as nearly every key has it. A token without "-" gets it back.
--- Tokens can't hold the separators of the messages that carry them.
+-- Character keys in sync messages: the key itself (keys hold no realm since
+-- the game stopped reporting realm names; older versions left the guild's
+-- realm off here and added it back, which gave the same text). A token with
+-- a "-" in it is a realm-keyed name from an older FableHub and makes the
+-- whole message invalid. Tokens can't hold the separators of the messages
+-- that carry them.
 ------------------------------------------------------------------------
 local MAX_WKEY = 48
 
 function Enc.WKey(key)
-  local realm = ns.KeyRealm and ns.KeyRealm() or ""
-  local tail = "-" .. realm
-  if realm ~= "" and #key > #tail and key:sub(-#tail) == tail then return key:sub(1, -#tail - 1) end
   return key
 end
 
 -- token -> key, or nil if it isn't a valid token
 function Enc.FromWKey(tok)
-  if type(tok) ~= "string" or tok == "" or #tok > MAX_WKEY or tok:find("[=,~:%^]") then return nil end
-  if tok:find("-", 1, true) then return tok end
-  local realm = ns.KeyRealm and ns.KeyRealm() or ""
-  return realm ~= "" and (tok .. "-" .. realm) or tok
+  if type(tok) ~= "string" or tok == "" or #tok > MAX_WKEY or tok:find("[=,~:%^%-]") then return nil end
+  return tok
 end
 
 ------------------------------------------------------------------------

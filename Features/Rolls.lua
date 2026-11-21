@@ -145,7 +145,9 @@ local function GuildKeyOf(guid, n, r)
     -- Forever puts a last name where the realm goes
     local full = ByName(ns.NormalizeName(n .. " " .. r))
     if full then return full end
-    if r == ns.KeyRealm() or r == ns.MyRealm() then return ByName(ns.NormalizeName(n)) end
+    -- (a realm the game reports right now, or the one in that member's own
+    -- roster name; a realm only saved from before isn't enough: see Core.lua)
+    if ns.IsGameRealm(r) or ns.IsMemberRealm(ns.NormalizeName(n), r) then return ByName(ns.NormalizeName(n)) end
     return nil
   end
   return ByName(ns.NormalizeName(n))
@@ -193,9 +195,8 @@ local function Build()
       list[#list + 1] = n
       if r and r ~= "" then list[#list + 1] = n .. "-" .. r; list[#list + 1] = n .. " " .. r
       else
-        -- (someone on our own realm: addon messages name them "Name-Realm")
-        list[#list + 1] = n .. "-" .. ns.MyRealm()
-        list[#list + 1] = n .. "-" .. ns.KeyRealm()
+        -- (someone on our own realm: addon messages may name them "Name-Realm")
+        for _, realm in ipairs(ns.KnownRealms()) do list[#list + 1] = n .. "-" .. realm end
       end
     end
     if key then

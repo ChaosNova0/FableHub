@@ -250,7 +250,12 @@ function D.Report()
   table.sort(rl)
   if #rl == 0 then add("Received: nothing yet")
   else for _, line in ipairs(rl) do add("Received from %s", line) end end
-  add("Key realm: %s (character realm %s)", ns.KeyRealm and ns.KeyRealm() or "?", ns.MyRealm())
+  local realms = ns.KnownRealms and ns.KnownRealms() or {}
+  add("Known realms: %s (character realm %s)", #realms > 0 and table.concat(realms, ", ") or "none", ns.MyRealm())
+  local moved = ns.Migrate and ns.Migrate.Status(ns.GuildDB and ns.GuildDB()) or ""
+  local backup = FableHubDB and FableHubDB.migrated
+  add("Old realm-named data: %s%s", moved ~= "" and moved or "nothing moved in this guild",
+    type(backup) == "table" and (", backup of your own characters kept since " .. date("%Y-%m-%d", backup.at or 0)) or "")
   local state = ns.GuildChannelState and ns.GuildChannelState() or "?"
   if state == "muted" then
     local peers = ns.WhisperPeers and ns.WhisperPeers(false) or {}

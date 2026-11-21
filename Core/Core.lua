@@ -2,7 +2,7 @@
 -- Core: namespace, saved data, events, shared helpers.
 
 local ADDON, ns = ...
-ns.VERSION = "0.30.0"
+ns.VERSION = "0.31.0"
 -- The sync format. Clients only take records, hashes and deltas from members
 -- on the same protocol; any future change to the wire format bumps it.
 ns.PROTOCOL = 2
@@ -70,8 +70,31 @@ function ns.Debug(msg)
 end
 
 ------------------------------------------------------------------------
--- Names. Character keys are always "Name-Realm" so data from the guild
--- roster, chat and our own character line up.
+-- Names. A character key is the character's name with no realm: "Name", or
+-- on Forever "First Lastname" (with a space; never split on it). Keys never
+-- hold a "-".
+-- Since a game update on 21 Nov 2026 the game no longer reports realm names,
+-- so the guild roster, chat and our own character all give names without
+-- one. Older versions put the realm in every key
+-- ("First Lastname-Realm"); Core/Migrate.lua moves that saved data over once.
+-- A "-" in a name the game gives us is followed by a realm we know
+-- (ns.IsRealmName), another realm, or Forever's last name ("First-Lastname").
+--   FableHubDB.realms = { [realm, lower case, no spaces/hyphens/apostrophes] = spelling }
+--     the guild's home realms (at most MAX_REALMS), learned only from the
+--     game's own realm functions and, at the migration, the realm in the
+--     name of the guild's own old table (Migrate.lua's guild step). Never
+--     from roster names, other guilds' tables or addon messages. A realm in
+--     this list makes "Name-Realm" count as guildmate "Name", but not
+--     exactly: only a realm the game reports right now (ns.IsGameRealm) or
+--     that member's own one (below) does, so a stranger on our old realm
+--     can't whisper as a guildmate (Comm.lua's Resolve, Rolls.lua). It's
+--     used as it is for our own key (ns.MyKey).
+--   ns.roster[key].realm: the part after "-" in that member's roster name,
+--     if any (a connected realm's name, should the game report them again).
+--     "Name-Realm" also counts, exactly, as that one member (ns.IsMemberRealm).
+-- The realms the game reports are asked for on every message, so they're
+-- worked out once and forgotten when the answer may change (logging in, a
+-- guild change, a roster update, a realm learned).
 ------------------------------------------------------------------------
 function ns.MyRealm()
   local realm = GetNormalizedRealmName and GetNormalizedRealmName()
@@ -81,54 +104,205 @@ function ns.MyRealm()
   return realm
 end
 
--- The realm in FableHub's character keys: the guild's home realm, so every
--- client labels everyone the same way. (On connected realms the roster gives
--- names without a realm, and each client used to add its own realm, so the
--- same character got different keys on different clients.)
--- (asked for every message and roster entry, so it's remembered until the guild changes)
-function ns.KeyRealm()
-  if ns._keyRealm then return ns._keyRealm end
-  if IsInGuild and IsInGuild() and GetGuildInfo then
-    local _, _, _, guildRealm = GetGuildInfo("player")
-    if type(guildRealm) == "string" and guildRealm ~= "" then
-      ns._keyRealm = (guildRealm:gsub("[%s%-]", ""))
-      return ns._keyRealm
-    end
-  end
-  return ns.MyRealm()
+local MAX_REALMS = 8
+local function RealmNorm(s) return (s:gsub("[%s%-']", ""):lower()) end
+
+-- the realms the game reports right now, as { [normalised] = true }: worked
+-- out once, forgotten by ns.ForgetGameRealms (see above)
+local gameRealms
+function ns.ForgetGameRealms() gameRealms = nil end
+
+-- remember a realm name as ours (see FableHubDB.realms above)
+function ns.LearnRealm(s)
+  gameRealms = nil
+  if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return end
+  local n = RealmNorm(s)
+  if n == "" or #n > 48 or n:find("|", 1, true) then return end
+  local db = FableHubDB
+  if type(db) ~= "table" then return end
+  if type(db.realms) ~= "table" then db.realms = {} end
+  if db.realms[n] then return end
+  local count = 0
+  for _ in pairs(db.realms) do count = count + 1 end
+  if count < MAX_REALMS then db.realms[n] = (s:gsub("[%s%-]", "")) end
 end
 
--- "Name" or "Name-AnyRealm" -> "Name-<KeyRealm>" (guild members are all on
--- connected realms; Forever names are unique "First Lastname")
+-- the realm names the game reports right now (each may be nil or "")
+local function GameRealms()
+  local normalized = GetNormalizedRealmName and GetNormalizedRealmName()
+  local name = GetRealmName and GetRealmName()
+  local guildRealm
+  if IsInGuild and IsInGuild() and GetGuildInfo then guildRealm = select(4, GetGuildInfo("player")) end
+  return normalized, name, guildRealm
+end
+
+local function GameRealmSet()
+  if gameRealms then return gameRealms end
+  local set = {}
+  local a, b, c = GameRealms()
+  for _, r in ipairs({ a or "", b or "", c or "" }) do
+    if type(r) == "string" and not (issecretvalue and issecretvalue(r)) then
+      local n = RealmNorm(r)
+      if n ~= "" then set[n] = true end
+    end
+  end
+  gameRealms = set
+  return set
+end
+
+-- the realm names the game reports now and the ones saved, as spellings
+-- ("Name-" .. spelling is how the game would name someone on it)
+function ns.KnownRealms()
+  local list, seen = {}, {}
+  local function add(s)
+    if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return end
+    s = s:gsub("[%s%-]", "")
+    local n = RealmNorm(s)
+    if n ~= "" and not seen[n] then seen[n] = true; list[#list + 1] = s end
+  end
+  local a, b, c = GameRealms()
+  add(a); add(b); add(c)
+  local saved = FableHubDB and FableHubDB.realms
+  if type(saved) == "table" then
+    for n, spelling in pairs(saved) do add(type(spelling) == "string" and spelling or n) end
+  end
+  return list
+end
+
+-- is `s` (the part of a name after "-") a realm the game reports right now,
+-- in any spelling? (an exact match: see above)
+function ns.IsGameRealm(s)
+  if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return false end
+  local t = RealmNorm(s)
+  return t ~= "" and GameRealmSet()[t] == true
+end
+
+-- is `s` one of our realms: one the game reports, or one saved from before?
+function ns.IsRealmName(s)
+  if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return false end
+  local t = RealmNorm(s)
+  if t == "" then return false end
+  if GameRealmSet()[t] then return true end
+  local saved = FableHubDB and FableHubDB.realms
+  return type(saved) == "table" and saved[t] ~= nil
+end
+
+-- is `s` the realm in roster member `key`'s own roster name? (see above)
+function ns.IsMemberRealm(key, s)
+  local r = type(key) == "string" and ns.roster[key]
+  if type(r) ~= "table" or type(r.realm) ~= "string" or type(s) ~= "string" then return false end
+  if issecretvalue and issecretvalue(s) then return false end
+  local t = RealmNorm(s)
+  return t ~= "" and RealmNorm(r.realm) == t
+end
+
+-- the realms the game reports now are worth remembering (see above)
+function ns.LearnGameRealms()
+  local a, b, c = GameRealms()
+  ns.LearnRealm(a); ns.LearnRealm(b); ns.LearnRealm(c)
+end
+
+-- A name from the game or saved data -> its key: the part before the first
+-- "-", without spaces around it. nil for "", "-" or "-Realm". Never adds a
+-- realm.
 function ns.NormalizeName(name)
-  if not name or name == "" then return nil end
-  local base = name:match("^([^-]+)") or name
-  local realm = ns.KeyRealm()
-  if realm == "" then return base end
-  return base .. "-" .. realm
+  if type(name) ~= "string" then return nil end
+  local base = (name:match("^([^-]*)") or ""):match("^%s*(.-)%s*$")
+  if base == "" then return nil end
+  return base
 end
 
 -- Our own key. The guild roster is the source of truth (Forever adds last
 -- names, which UnitFullName reports differently), so once the roster loads we
 -- match ourselves by GUID and adopt the roster's spelling of our name.
+-- (Our records saved under an older spelling are moved by Migrate.lua.)
 function ns.MyKey()
   if ns._myKey then return ns._myKey end
-  local name, realm = UnitFullName("player")
-  if not name then return nil end
-  local legacy = name .. "-" .. ((realm and realm ~= "") and realm or ns.MyRealm()) -- how older versions keyed us
+  local name, tail = UnitFullName("player")
+  if type(name) ~= "string" or name == "" then return nil end
   -- Forever reports the last name where the realm would be ("Sniffin", "Tootsies")
-  if realm and realm ~= "" and realm ~= ns.MyRealm() then name = name .. " " .. realm end
+  if type(tail) == "string" and tail ~= "" and not ns.IsRealmName(tail) then name = name .. " " .. tail end
   ns._myKey = ns.NormalizeName(name)
-  -- move our own record saved under an older spelling
-  local chars = FableHubDB and FableHubDB.chars
-  if chars and legacy ~= ns._myKey and chars[legacy] then
-    if not chars[ns._myKey] or (chars[ns._myKey].ts or 0) < (chars[legacy].ts or 0) then
-      chars[ns._myKey] = chars[legacy]
-      chars[ns._myKey].key = ns._myKey
-    end
-    chars[legacy] = nil
-  end
   return ns._myKey
+end
+
+-- Two records of our own character (the same character saved under two
+-- keys) made into one. Either may be nil. The newer one is the base and
+-- decides which professions the character has: one only the older record
+-- has was dropped since (or not looked at yet), so its recipes go into the
+-- stash, where Scan.lua takes them back from if the game still lists the
+-- profession. (So a newer record with no professions at all, as before its
+-- first scan, loses nothing either.) For a profession both have, the
+-- recipes of the latest look at the profession window win, else the longer
+-- list. Crafted items and stashed recipes are put together. The result's
+-- time is past both, and its checksum is worked out again. (Only ever for
+-- our own records: we're their owner.)
+local function Copy(t)
+  local out = {}
+  for k, v in pairs(t) do out[k] = v end
+  return out
+end
+
+local function MergeProf(newer, older)
+  if not newer then return Copy(older) end
+  if not older then return Copy(newer) end
+  local p = Copy(newer)
+  local nr, orc = newer.recipes, older.recipes
+  local function Size(t)
+    local n = 0
+    for _ in pairs(type(t) == "table" and t or {}) do n = n + 1 end
+    return n
+  end
+  -- recipes from the latest look at the profession window, else the longer list
+  if newer.scanned or older.scanned then
+    if (older.scanned or 0) > (newer.scanned or 0) then p.recipes, p.scanned = orc, older.scanned end
+  elseif Size(orc) > Size(nr) then
+    p.recipes = orc
+  end
+  return p
+end
+
+function ns.MergeOwnRecords(a, b)
+  if not a and not b then return nil end
+  if not a or not b then
+    local rec = Copy(a or b)
+    rec.ts, rec.hash = (rec.ts or 0) + 1, nil
+    return rec
+  end
+  local newer, older = a, b
+  if (b.ts or 0) > (a.ts or 0) then newer, older = b, a end
+  local rec = Copy(newer)
+  local nprofs = type(newer.profs) == "table" and newer.profs or {}
+  local oprofs = type(older.profs) == "table" and older.profs or {}
+  -- professions: the newer record's
+  rec.profs = {}
+  for skillLine, p in pairs(nprofs) do rec.profs[skillLine] = MergeProf(p, oprofs[skillLine]) end
+  -- crafted items and stashed recipes: both (the newer wins where they differ)
+  for _, field in ipairs({ "outputs", "stash" }) do
+    if older[field] or newer[field] then
+      local t = {}
+      for k, v in pairs(older[field] or {}) do t[k] = v end
+      for k, v in pairs(newer[field] or {}) do t[k] = v end
+      rec[field] = t
+    end
+  end
+  -- the older record's other professions: their recipes into the stash
+  -- (unless the newer one stashed that profession itself)
+  for skillLine, p in pairs(oprofs) do
+    if not rec.profs[skillLine] and type(p) == "table" and type(p.recipes) == "table" and next(p.recipes) then
+      rec.stash = rec.stash or {}
+      if rec.stash[skillLine] == nil or not (newer.stash and newer.stash[skillLine]) then rec.stash[skillLine] = p.recipes end
+    end
+  end
+  -- cooldowns from the latest reading; time played from the latest reading
+  if (older.cdChecked or 0) > (newer.cdChecked or 0) then rec.cds, rec.cdChecked = older.cds, older.cdChecked end
+  for _, field in ipairs({ "played", "playedLive" }) do
+    local o, n = older[field], newer[field]
+    if type(o) == "table" and (type(n) ~= "table" or (o.at or 0) > (n.at or 0)) then rec[field] = o end
+  end
+  rec.ts = math.max(a.ts or 0, b.ts or 0) + 1
+  rec.hash = nil
+  return rec
 end
 
 function ns.SetMyKey(newKey)
@@ -139,9 +313,7 @@ function ns.SetMyKey(newKey)
   if not FableHubDB then return end
   local chars = FableHubDB.chars
   if oldKey and chars[oldKey] then
-    if not chars[newKey] or (chars[newKey].ts or 0) < (chars[oldKey].ts or 0) then
-      chars[newKey] = chars[oldKey]
-    end
+    chars[newKey] = ns.MergeOwnRecords(chars[newKey], chars[oldKey])
     chars[oldKey] = nil
   end
   local rec = chars[newKey]
@@ -150,7 +322,8 @@ function ns.SetMyKey(newKey)
     rec.ts = math.max(ns.Now(), (rec.ts or 0) + 1) -- never backwards
   end
   for _, g in pairs(FableHubDB.guilds) do
-    if oldKey then
+    -- (tables kept as a backup, or skipped, by Migrate.lua are left as they are)
+    if oldKey and not g.migratedTo and not g.migrateSkipped and g.members and g.addonUsers then
       g.members[oldKey] = nil; g.addonUsers[oldKey] = nil
       if g.partials then g.partials[oldKey] = nil end
     end
@@ -209,15 +382,21 @@ end
 --     and checksum the character's owner last announced first-hand (hello,
 --     record or delta; see Comm.lua SetOwnerHash). Copies passed on by others
 --     must match it.
+--   FableHubDB.guilds is keyed "<guild name>||<faction>" (the middle part was
+--     the guild's realm before the game stopped reporting it; Migrate.lua
+--     moves those tables over).
+--   FableHubDB.dbVersion: 2 = keys without a realm (Migrate.lua's account step done)
 ------------------------------------------------------------------------
-local DB_VERSION = 1
+local DB_VERSION = 2
 
 local STALE_GUILD = 90 * 86400 -- forget a guild's data after 90 days without visiting it
 
 local function InitDB()
   FableHubDB = FableHubDB or {}
   local db = FableHubDB
-  db.dbVersion = db.dbVersion or DB_VERSION
+  -- (saved data with no version yet goes through every step: each does
+  -- nothing when there's nothing to move)
+  db.dbVersion = db.dbVersion or 1
   db.guilds = db.guilds or {}
   db.settings = db.settings or {}
   db.chars = db.chars or {} -- your own characters' records, kept even if you change guild
@@ -227,6 +406,14 @@ local function InitDB()
     db.guilds, db.chars, db.errors = {}, {}, nil
   end
   db.epoch = ns.DATA_EPOCH
+  -- keys without a realm: our own characters' records, once (Migrate.lua).
+  -- (Before the tidy below: the names of old guild tables, even long
+  -- unvisited ones, tell it which realms this account played on.)
+  if db.dbVersion < DB_VERSION and ns.Migrate then
+    local ok, err = pcall(ns.Migrate.Account, db)
+    if ok then db.dbVersion = DB_VERSION else ns.ReportError("moving saved data: " .. tostring(err)) end
+  end
+  if ns.Migrate then ns.Migrate.DropOldBackup(db) end
   -- tidy guilds not visited for a long time (e.g. old characters, beta guilds)
   local now = time()
   for gk, g in pairs(db.guilds) do
@@ -237,10 +424,9 @@ end
 
 function ns.GuildKey()
   if not IsInGuild() then return nil end
-  local guildName, _, _, guildRealm = GetGuildInfo("player")
-  if not guildName then return nil end
-  local faction = UnitFactionGroup("player") or ""
-  return guildName .. "|" .. (guildRealm or ns.MyRealm()) .. "|" .. faction
+  local guildName = GetGuildInfo("player")
+  if not guildName or guildName == "" then return nil end
+  return guildName .. "||" .. (UnitFactionGroup("player") or "")
 end
 
 local CheckPartials -- (below, with the summaries)
@@ -290,6 +476,12 @@ function ns.GuildDB()
   g.owner = g.owner or {}
   if not partialsChecked[g] then
     partialsChecked[g] = true
+    -- this guild's data saved under the old realm-keyed name moves over first
+    -- (once; see Migrate.lua)
+    if ns.Migrate then
+      local ok, err = pcall(ns.Migrate.Guild, g, gk)
+      if not ok then ns.ReportError("moving guild data: " .. tostring(err)) end
+    end
     CheckPartials(g)
     CheckOwners(g)
     RehashMembers(g)
@@ -408,7 +600,8 @@ function ns.StoreSummaries(g, list)
   local changed = 0
   for _, rec in ipairs(list) do
     local key = rec.key
-    if key and key ~= me and ns.roster[key] and SummaryNew(g, rec) then
+    -- (a key with a realm in it is never one of ours: see the names section)
+    if key and key ~= me and not key:find("-", 1, true) and ns.roster[key] and SummaryNew(g, rec) then
       if g.partials[key] or count < MAX_PARTIALS then
         if not g.partials[key] then count = count + 1 end
         rec.partial = true
@@ -466,7 +659,7 @@ end
 ------------------------------------------------------------------------
 -- Guild roster cache (everyone in the guild, addon or not)
 ------------------------------------------------------------------------
-ns.roster = {}      -- [key] = { name, rank, rankIndex, level, class, online, zone, note }
+ns.roster = {}      -- [key] = { name, rank, rankIndex, level, class, online, zone, note, guid, realm }
 ns.rosterOrder = {}
 
 function ns.RequestRoster()
@@ -479,12 +672,15 @@ end
 
 local function RebuildRoster()
   local roster, order = {}, {}
+  ns.LearnGameRealms()
   local n = GetNumGuildMembers() or 0
   local myGuid = UnitGUID and UnitGUID("player")
   for i = 1, n do
     local name, rankName, rankIndex, level, _, zone, note, _, online, _, classFile,
       _, _, _, _, _, guid = GetGuildRosterInfo(i)
     local key = ns.NormalizeName(name)
+    -- (a realm in the roster name stays with that member only: see the names section)
+    local tail = key and name:match("^[^-]+%-(.+)$")
     if key and guid and myGuid and guid == myGuid then ns.SetMyKey(key) end
     if key then
       local lastSeen
@@ -495,7 +691,7 @@ local function RebuildRoster()
       roster[key] = {
         key = key, rank = rankName, rankIndex = rankIndex, level = level,
         class = classFile, online = online and true or false, zone = zone, note = note, lastSeen = lastSeen,
-        guid = guid,
+        guid = guid, realm = tail or nil,
       }
       order[#order + 1] = key
     end
@@ -597,12 +793,16 @@ ns.RegisterEvent("GUILD_ROSTER_UPDATE", function()
 end)
 
 ns.RegisterEvent("PLAYER_GUILD_UPDATE", function()
-  ns._keyRealm = nil -- joined or left a guild
+  ns.ForgetGameRealms() -- (the guild's realm comes with the guild)
   ns.MirrorMyRecord()
   ns.RequestRoster()
 end)
 
+-- (the game may only report its realms once we're in the world)
+ns.RegisterEvent("PLAYER_ENTERING_WORLD", function() ns.ForgetGameRealms() end)
+
 ns.RegisterEvent("PLAYER_LOGIN", function()
+  ns.ForgetGameRealms()
   if ns.freshStart then
     ns.freshStart = nil
     C_Timer.After(8, function()
