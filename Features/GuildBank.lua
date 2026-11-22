@@ -18,7 +18,12 @@
 --   money = { v, ts, by },
 --   perm  = { ts, by, ranks, tabs, view = { [tab] = { [rankIndex] = true } } },
 --   requests = { [id] = { id, by, item, qty, note, status, ts, actor, created } },
+--   requestsGone = { [id] = ts of the change that handled or cancelled it },
 -- }
+-- A handled or cancelled request is cleared a week later, but its id is
+-- remembered until an open copy of it would have expired anyway
+-- (B.GONE_KEEP): a copy that turns up later, from someone who was away
+-- and still holds it as open, is refused, so it can't come back.
 -- Messages: t tab contents, l log, g gold, p permissions, q request, d digest.
 
 local _, ns = ...
@@ -31,6 +36,7 @@ B.MAX_TABS = 8
 B.STATUS = { open = "Requested", given = "Handed over", declined = "Declined", cancelled = "Cancelled" }
 B.KEEP_DONE = 7 * 86400
 B.EXPIRE_OPEN = 30 * 86400 -- open requests nobody answered are dropped after this
+B.GONE_KEEP = B.EXPIRE_OPEN + 86400 -- cleared ids are remembered this long after they finished
 
 local function G()
   local g = ns.GuildDB()
@@ -40,9 +46,18 @@ local function G()
   b.tabs = b.tabs or {}
   b.logs = b.logs or {}
   b.requests = b.requests or {}
+  b.requestsGone = b.requestsGone or {}
   return b
 end
 B.G = G
+
+-- a request that was handled or cancelled and then cleared: refused if it
+-- turns up again
+local function Gone(id)
+  local b = G()
+  return b ~= nil and type(id) == "string" and b.requestsGone[id] ~= nil
+end
+B.Gone = Gone
 
 local function Safe(s) return (tostring(s or ""):gsub("[%^/;,|]", " ")) end
 
@@ -604,7 +619,7 @@ end
 
 local function ApplyReq(r, silent)
   local b = G()
-  if not b or Finished(r) then return false end
+  if not b or Finished(r) or Gone(r.id) then return false end
   local old = b.requests[r.id]
   if old and (old.ts or 0) >= (r.ts or 0) then return false end
   if not Allowed(old, r, true) then return false end
@@ -675,6 +690,8 @@ local MAX_TOTAL = 30 -- and requests of any kind (handled ones are kept a week)
 local function HandleReq(sender, payload, replayed)
   local r = DecodeReq(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
+  -- handled and cleared here: an old copy from someone who missed that
+  if Gone(r.id) then return end
   -- requesters must be guild members, so made-up names can't get round MAX_OPEN
   if next(ns.roster) and not ns.roster[r.by] then return end
   local b = G()
@@ -775,22 +792,30 @@ ns.RegisterDigest(function() B.SendDigest() end)
 -- have left the guild: only with a loaded roster, and not if it would drop
 -- most of them (a roster that's still filling in must not wipe them; as
 -- Alts.PruneLeft)
+function B.PruneRequests()
+  local b = G()
+  if not b then return end
+  local now = ns.Now()
+  local roster = next(ns.roster) and IsInGuild() and ns.roster
+  local left, total = {}, 0
+  for id, r in pairs(b.requests) do
+    if Finished(r) then
+      b.requests[id] = nil
+      -- (remembered, so an old open copy can't bring it back; one dropped
+      -- for being open too long is refused by its date anyway)
+      if r.status ~= "open" then b.requestsGone[id] = r.ts or now end
+    else
+      total = total + 1
+      if roster and not roster[r.by] then left[#left + 1] = id end
+    end
+  end
+  if #left > 0 and #left * 2 <= total then
+    for _, id in ipairs(left) do b.requests[id] = nil end
+  end
+  for id, ts in pairs(b.requestsGone) do
+    if type(ts) ~= "number" or now - ts > B.GONE_KEEP then b.requestsGone[id] = nil end
+  end
+end
 ns.On("LOGIN", function()
-  C_Timer.After(50, function()
-    local b = G()
-    if not b then return end
-    local roster = next(ns.roster) and IsInGuild() and ns.roster
-    local left, total = {}, 0
-    for id, r in pairs(b.requests) do
-      if Finished(r) then
-        b.requests[id] = nil
-      else
-        total = total + 1
-        if roster and not roster[r.by] then left[#left + 1] = id end
-      end
-    end
-    if #left > 0 and #left * 2 <= total then
-      for _, id in ipairs(left) do b.requests[id] = nil end
-    end
-  end)
+  C_Timer.After(50, function() B.PruneRequests() end)
 end)

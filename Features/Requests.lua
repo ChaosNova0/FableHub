@@ -5,6 +5,12 @@
 -- Rules: the requester posts, edits and cancels; another member claims; the claimer
 -- (or requester) marks it done; the claimer or requester can un-claim; officers can
 -- cancel anything. Requests expire 7 days after posting.
+--
+-- g.requestsGone[id] = ts of the change that finished it. A done or cancelled
+-- request is cleared 30 minutes after it finishes, but its id is remembered
+-- until it would have expired anyway (R.GONE_KEEP after it finished): any copy
+-- of it that turns up later (from someone who was offline when it finished
+-- and still holds it as open or claimed) is refused, so it can't come back.
 
 local _, ns = ...
 local Enc, P = ns.Encode, ns.Plans
@@ -13,6 +19,9 @@ ns.Requests = R
 
 R.EXPIRE = 7 * 86400
 R.KEEP_FINISHED = 30 * 60 -- done/cancelled requests are cleared after 30 minutes
+-- a cleared request's id is remembered this long after it finished (past the
+-- point where Stale refuses any copy of it by its posting date)
+R.GONE_KEEP = R.EXPIRE + R.KEEP_FINISHED + 86400
 
 local function Stale(r)
   if r.status == "done" or r.status == "cancelled" then return ns.Now() - (r.ts or 0) > R.KEEP_FINISHED end
@@ -26,8 +35,16 @@ local function G()
   local g = ns.GuildDB()
   if not g then return nil end
   g.requests = g.requests or {}
+  g.requestsGone = g.requestsGone or {}
   return g
 end
+
+-- a request that finished and was cleared: refused if it turns up again
+local function Gone(id)
+  local g = G()
+  return g ~= nil and type(id) == "string" and g.requestsGone[id] ~= nil
+end
+R.Gone = Gone
 
 function R.All() local g = G(); return g and g.requests or {} end
 function R.Get(id) return R.All()[id] end
@@ -175,7 +192,7 @@ local function Allowed(old, new, actor)
 end
 
 local function Apply(r, actor, silent)
-  if Stale(r) then return false end -- already cleared by everyone else
+  if Stale(r) or Gone(r.id) then return false end -- already cleared by everyone else
   local all = R.All()
   local old = all[r.id]
   if old and (old.ts or 0) >= (r.ts or 0) then return false end
@@ -296,6 +313,8 @@ local baseHandler = ns.CommHandlers.N
 local function HandleRequest(sender, payload, replayed)
   local r, actor = Decode(payload)
   if not r or not ns.TimeOK(r.ts) or not ns.TimeOK(r.created) then return end
+  -- finished and cleared here: an old copy from someone who missed that
+  if Gone(r.id) then return end
   -- requesters must be guild members, so made-up names can't get round MAX_OPEN
   if next(ns.roster) and not ns.roster[r.by] then return end
   local all = R.All()
@@ -382,9 +401,18 @@ function R.Notify(old, new)
 end
 
 function R.Prune()
-  local all, removed = R.All(), false
+  local g = G()
+  if not g then return end
+  local all, gone, removed = g.requests, g.requestsGone, false
+  local now = ns.Now()
   for id, r in pairs(all) do
-    if Stale(r) then all[id] = nil; removed = true end
+    if Stale(r) then
+      all[id] = nil; removed = true
+      if r.status == "done" or r.status == "cancelled" then gone[id] = r.ts or now end
+    end
+  end
+  for id, ts in pairs(gone) do
+    if type(ts) ~= "number" or now - ts > R.GONE_KEEP then gone[id] = nil end
   end
   if removed then ns.Fire("REQUESTS_CHANGED") end
 end
