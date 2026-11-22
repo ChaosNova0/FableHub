@@ -11,6 +11,9 @@
 -- until it would have expired anyway (R.GONE_KEEP after it finished): any copy
 -- of it that turns up later (from someone who was offline when it finished
 -- and still holds it as open or claimed) is refused, so it can't come back.
+-- Only a finish we saw first-hand is remembered: one that reached us only as
+-- a passed-on copy (r.relayed, kept locally, never sent) isn't, so a made-up
+-- "done" copy can't keep a live request away.
 
 local _, ns = ...
 local Enc, P = ns.Encode, ns.Plans
@@ -334,6 +337,7 @@ local function HandleRequest(sender, payload, replayed)
   end
   if not firstHand then
     if old then return end
+    r.relayed = true
     -- a request we never saw, open or not: only from the member answering our
     -- catch-up (so nobody can post or claim on someone else's behalf)
     if not replayed then
@@ -408,7 +412,7 @@ function R.Prune()
   for id, r in pairs(all) do
     if Stale(r) then
       all[id] = nil; removed = true
-      if r.status == "done" or r.status == "cancelled" then gone[id] = r.ts or now end
+      if (r.status == "done" or r.status == "cancelled") and not r.relayed then gone[id] = r.ts or now end
     end
   end
   for id, ts in pairs(gone) do

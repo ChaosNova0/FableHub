@@ -23,7 +23,9 @@
 -- A handled or cancelled request is cleared a week later, but its id is
 -- remembered until an open copy of it would have expired anyway
 -- (B.GONE_KEEP): a copy that turns up later, from someone who was away
--- and still holds it as open, is refused, so it can't come back.
+-- and still holds it as open, is refused, so it can't come back. Only a
+-- finish we saw first-hand is remembered (r.relayed marks a passed-on copy;
+-- kept locally, never sent), so a made-up one can't keep a live request away.
 -- Messages: t tab contents, l log, g gold, p permissions, q request, d digest.
 
 local _, ns = ...
@@ -711,6 +713,7 @@ local function HandleReq(sender, payload, replayed)
   -- by other members during catch-up only fill in requests we don't have yet
   if not ns.FirstHand(sender, r.actor, "bankreq") then
     if old then return end
+    r.relayed = true
     -- a request we never saw, open or handled: only from the member answering
     -- our catch-up (so nobody can ask in someone else's name, or hand things
     -- over in an officer's)
@@ -803,7 +806,7 @@ function B.PruneRequests()
       b.requests[id] = nil
       -- (remembered, so an old open copy can't bring it back; one dropped
       -- for being open too long is refused by its date anyway)
-      if r.status ~= "open" then b.requestsGone[id] = r.ts or now end
+      if r.status ~= "open" and not r.relayed then b.requestsGone[id] = r.ts or now end
     else
       total = total + 1
       if roster and not roster[r.by] then left[#left + 1] = id end
