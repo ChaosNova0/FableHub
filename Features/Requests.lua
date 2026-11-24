@@ -232,9 +232,13 @@ function R.Post(recipe, prof, item, qty, mats, note)
   return Commit(r)
 end
 
+-- (our own change is first-hand, even to a request that first reached us as
+-- a passed-on copy, so it doesn't keep the "passed-on" mark: otherwise our
+-- own cancel or done wouldn't be remembered and the request could come back)
 local function Copy(r)
   local c = {}
   for k, v in pairs(r) do c[k] = v end
+  c.relayed = nil
   return c
 end
 

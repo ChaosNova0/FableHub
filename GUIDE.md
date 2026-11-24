@@ -1,4 +1,4 @@
-# FableHub 0.31.1
+# FableHub 0.31.2
 
 Guild roster and profession tracker for WoW: Forever.
 

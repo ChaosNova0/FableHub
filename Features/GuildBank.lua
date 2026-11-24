@@ -664,6 +664,8 @@ end
 function B.SetStatus(r, status)
   local c = {}
   for k, v in pairs(r) do c[k] = v end
+  -- (our own change is first-hand, even to a passed-on copy, so it's remembered once cleared)
+  c.relayed = nil
   c.status = status
   return CommitReq(c)
 end
